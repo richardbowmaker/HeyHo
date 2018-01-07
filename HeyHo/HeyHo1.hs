@@ -56,7 +56,13 @@ cmdTest f b = do
     set b [ text := "Clicked! "]
     return ()
     
+Func123 :: Int -> Int
+Func123 x = 2*x  
     
 winClose :: HWND ->  WindowMessage -> WPARAM -> LPARAM -> IO LRESULT
 winClose _ _ _ _ = do 
-    return (0)    
+    return (0)
+
+
+    
+    
