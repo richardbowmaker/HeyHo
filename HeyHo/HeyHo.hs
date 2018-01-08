@@ -25,10 +25,21 @@ foreign import ccall unsafe "SetWindowPos" c_SetWindowPos :: HWND -> HWND -> Int
 foreign import ccall "GetFnPtr" c_GetFnPtr :: Ptr (Int -> Int)
 foreign import ccall "dynamic" doublePtr :: FunPtr (Int -> Int) -> (Int -> Int)
 
+foreign import ccall unsafe "SetFnPtr" c_SetFnPtr :: FunPtr (Int -> Int) -> IO ()
+foreign import ccall unsafe "UseFnPtr" c_UseFnPtr :: Int -> IO (Int)
+
+foreign import ccall unsafe "HookWindow" c_HookWindow :: IO (CInt)
+foreign import ccall unsafe "UnhookWindow" c_UnhookWindow :: IO ()
+
 myDouble :: Int -> Int
 myDouble = doublePtr (castPtrToFunPtr c_GetFnPtr)
 
-
+-- timesThree export
+foreign export ccall timesThree :: Int -> Int
+foreign import ccall safe "wrapper" createTimesThreePtr :: (Int -> Int) -> IO (FunPtr (Int -> Int))
+timesThree :: Int -> Int
+timesThree x = 3*x
+ 
 
 main = start mainGUI
 
@@ -42,25 +53,28 @@ mainGUI = do
     
     set f [ text:= "HeyHo", bgcolor := white]
            
-    b  <- button f [text := "Test "]   
-    -- set test [on command := cmdTest f test]
+    b  <- button f [text := "Test xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]   
+    set b [on command := cmdTest b]
 
     -- panel fills frame client area
     set p [ bgcolor := red]
 
-
-    -- 
---    set f [ layout := container p $ minsize (sz 200 200) $ fill $ label "x:"]
---    set f [ layout := minsize (sz 400 400) $ fill $ widget p]
+    timesThreePtr <- createTimesThreePtr timesThree
+    c_SetFnPtr timesThreePtr
+--    n <- c_UseFnPtr 3
+   
+    set f [ layout := minsize (sz 400 400) $ fill $ widget p]
 --    windowSetSize f (Rect 0 0 500 500) wxSIZE_USE_EXISTING 
     set f [ size := (Size 500 500)]
     
-    
-  
+     
     hwnd <- windowGetHandle p 
---    n <- c_fnTheDll hwnd
+    n <- c_fnTheDll hwnd
 
-    set b [ text := "return " ++ show (myDouble 12)]
+    c_HookWindow
+
+    set b [ text := "return " ++ show timesThreePtr]
+    repaint b
 
 {-
     hwnd <- windowGetHandle p   
@@ -72,6 +86,8 @@ mainGUI = do
    
     set p [on resize := panelResize p hwnd1]
 -}
+
+--    freeHaskellFunPtr timesThreePtr
     
     return ()
     
@@ -84,14 +100,13 @@ panelResize p hwnd = do
     
 
        
-{-   
-cmdTest :: Panel () -> Button () -> IO ()
-cmdTest p b = do
+  
+cmdTest :: Button () -> IO ()
+cmdTest b = do
     set b [ text := "Clicked! "]
-    hwnd <- windowGetHandle p 
-    c_fnTheDll hwnd
+    c_UnhookWindow
     return ()
--}
+
     
 winClose :: HWND ->  WindowMessage -> WPARAM -> LPARAM -> IO LRESULT
 winClose _ _ _ _ = do 
