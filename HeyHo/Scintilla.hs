@@ -6,7 +6,8 @@ module Scintilla
     scnNotifyGetWParam,
     scnNotifyGetListCompletionMethod,
     scnSetSizeFromParent,
-    scnGetHwnd
+    scnGetHwnd,
+    scnEnableEvents
 ) where 
     
 import Numeric
@@ -20,6 +21,7 @@ import System.Win32.Types
 import Graphics.Win32.Window
 import Graphics.Win32.GDI.Types
 import Graphics.Win32.Message
+import Graphics.Win32.Misc
 
 import Graphics.UI.WXCore
 import Foreign.Marshal.Alloc
@@ -37,9 +39,9 @@ type HHOOK = Word64
 --   _In_ HINSTANCE hMod,
 --   _In_ DWORD     dwThreadId
 -- );
-foreign import ccall unsafe "SetWindowsHookEx"
-    c_SetWindowsHookEx :: Int32 -> Word64 -> HINSTANCE -> DWORD -> IO (HHOOK)
-
+foreign import ccall unsafe "SetWindowsHookExW"
+    c_SetWindowsHookEx :: Int32 -> FunPtr (Int32 -> WPARAM -> LPARAM -> IO (LRESULT)) -> HINSTANCE -> DWORD -> IO (HHOOK)        
+           
 -- LRESULT WINAPI CallNextHookEx(
 --   _In_opt_ HHOOK  hhk,
 --   _In_     int    nCode,
@@ -55,6 +57,16 @@ foreign import ccall unsafe "CallNextHookEx"
 foreign import ccall unsafe "UnhookWindowsHookEx"
     c_UnhookWindowsHookEx :: HHOOK-> IO (BOOL)
   
+
+-- LRESULT CALLBACK CallWndProc(
+--   _In_ int    nCode,
+--   _In_ WPARAM wParam,
+--   _In_ LPARAM lParam
+-- );
+--foreign export ccall scnCallWndProc :: Int32 -> WPARAM -> LPARAM -> IO (LRESULT)
+foreign import ccall safe "wrapper" scnCreateCallWndProc :: 
+    (Int32 -> WPARAM -> LPARAM -> IO(LRESULT)) -> IO (FunPtr (Int32 -> WPARAM -> LPARAM -> IO(LRESULT)))
+ 
 -- BOOL WINAPI SetWindowPos(
 --   _In_     HWND hWnd,
 --   _In_opt_ HWND hWndInsertAfter,
@@ -72,8 +84,12 @@ foreign import ccall unsafe "SetWindowPos"
 --   _Out_ LPRECT lpRect
 -- );    
 foreign import ccall unsafe "GetWindowRect"
-    c_GetWindowRec :: HWND -> Ptr (ScnRect) -> IO (Word32)    
-    
+    c_GetWindowRec :: HWND -> Ptr (ScnRect) -> IO (Word32) 
+
+-- DWORD WINAPI GetCurrentThreadId(void)
+foreign import ccall unsafe "GetCurrentThreadId"
+    c_GetCurrentThreadId :: IO (Word32) 
+     
 --------------------------------------------------------------
 -- data types
 --------------------------------------------------------------
@@ -231,7 +247,7 @@ data ScnEditor = ScnEditor
         hScnWnd     :: HWND, 
         hDll        :: HINSTANCE, 
         hHook       :: HHOOK,
-        events      :: (SCNotification -> IO ())
+        events      :: Maybe (SCNotification -> IO ())
     }  
  
 -----------------------------------------------------------
@@ -244,7 +260,7 @@ scnCreateEditor parent = do
     scnHwnd <- createWindow (mkClassName "Scintilla") "Source" (wS_CHILD + wS_VSCROLL + wS_HSCROLL + wS_CLIPCHILDREN) 
         (Just 0)  (Just 0)  (Just 500)  (Just 500) (Just parent) Nothing hDll scnWinClose                    
     showWindow scnHwnd sW_SHOW     
-    v <- varCreate (ScnEditor parent scnHwnd hDll 0 nullPtr)
+    v <- varCreate (ScnEditor parent scnHwnd hDll 0 Nothing)
     scn <- varGet v
     scnSetSizeFromParent scn
     return (scn)
@@ -276,20 +292,20 @@ scnNotifyGetWParam (SCNotification _ _ _ _ _ _ _ _ _ _ _ x _ _ _ _ _ _ _ _ _ _ _
 
 scnNotifyGetListCompletionMethod :: SCNotification -> Int32
 scnNotifyGetListCompletionMethod (SCNotification _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ x) = x           
-    
-scnEnableEvents :: ScnEditor -> (SCNotification -> IO ()) -> IO ()
-scnEnableEvents (ScnEditor p c lib hk f) f' = do
-    c_SetWindowsHookEx 4 ? lib 
+
+scnEnableEvents :: ScnEditor -> Maybe (SCNotification -> IO ()) -> IO (ScnEditor)
+scnEnableEvents scn@(ScnEditor p c lib hk f) f' = do
+    callback <- scnCreateCallWndProc (scnCallWndProc scn)
+    tid <- c_GetCurrentThreadId
+    c_SetWindowsHookEx 4 callback nullPtr tid
     return (ScnEditor p c lib hk f')
- 
+   
+-- Windows Hook callback
+scnCallWndProc :: ScnEditor -> Int32 -> WPARAM -> LPARAM -> IO (LRESULT) 
+scnCallWndProc _ _ _ _ = do
+    messageBox nullHANDLE "In SCN" "In SCN" mB_OK
+    return (0)
+
+    
 
  
-    -- HHOOK WINAPI SetWindowsHookEx(
---   _In_ int       idHook,
---   _In_ HOOKPROC  lpfn,
---   _In_ HINSTANCE hMod,
---   _In_ DWORD     dwThreadId
--- );
-foreign import ccall unsafe "SetWindowsHookEx"
-    c_SetWindowsHookEx :: Int32 -> Word64 -> HINSTANCE -> DWORD -> IO (HHOOK)        
-            

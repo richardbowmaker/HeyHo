@@ -31,7 +31,7 @@ foreign import ccall unsafe "fnTheDll" c_fnTheDll :: HWND -> IO (CInt)
 foreign import ccall "GetFnPtr" c_GetFnPtr :: Ptr SCNotification
 foreign import ccall "dynamic" doublePtr :: FunPtr (Int -> Int) -> (Int -> Int)
 
-foreign import ccall unsafe "SetFnPtr" c_SetFnPtr :: FunPtr (Int -> Int) -> IO ()
+foreign import ccall unsafe "SetFnPtr" c_SetFnPtr :: FunPtr (Int -> IO (Int)) -> IO ()
 foreign import ccall unsafe "UseFnPtr" c_UseFnPtr :: Int -> IO (Int)
 
 foreign import ccall unsafe "HookWindow" c_HookWindow :: IO (CInt)
@@ -47,9 +47,20 @@ foreign import ccall safe "wrapper" createTimesThreePtr :: (Int -> Int) -> IO (F
 timesThree :: Int -> Int
 timesThree x = 3*x
  
+-- Some IO callback export
+foreign export ccall someIO :: Int -> IO (Int)
+foreign import ccall safe "wrapper" createSomeIO :: (Int -> IO (Int)) -> IO (FunPtr (Int -> IO (Int)))
+someIO :: Int -> IO (Int)
+someIO x = do
+    return (3*x)
+  
+someIO' :: Panel() -> Int -> IO (Int)
+someIO' p x = do
+    infoDialog p "mess1" "mess2"
+    return (3*x)
 
-            
-
+  
+    
 main = start mainGUI
 
 data Drag = Drag { downAt :: Point, at :: Point }
@@ -69,10 +80,14 @@ mainGUI = do
     txt <- textEntry f [text := "..."]
  
  
-
+--     someIOPtr <- createSomeIO (someIO' p)
+--    c_SetFnPtr someIOPtr
+  
+    
 --    timesThreePtr <- createTimesThreePtr timesThree
 --    c_SetFnPtr timesThreePtr
 --    n <- c_UseFnPtr 3
+--    set txt [text := "answer = " ++ show n]
    
 
 --  set f [ layout := minsize (sz 400 400) $ fill $ widget p]
@@ -84,20 +99,16 @@ mainGUI = do
    
     hwnd <- windowGetHandle p
     scn <- scnCreateEditor hwnd
+    scn <- scnEnableEvents scn Nothing
 
      
 
 --    c_HookWindow
 
-
-
-
-       
-
    
     set p [on resize := scnSetSizeFromParent scn]
 
-    (Size x y) <- get p size
+--    (Size x y) <- get p size
 --    c_SetWindowPos scnHwnd hWND_TOP 0 0 x y sWP_NOMOVE
 
 --    freeHaskellFunPtr timesThreePtr
