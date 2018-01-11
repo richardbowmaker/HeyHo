@@ -2,10 +2,10 @@ module Scintilla
 (   SCNotification,
     ScnEditor,
     scnCreateEditor,
+    scnNotifyGetCode,
     scnNotifyGetPosition,
     scnNotifyGetWParam,
     scnNotifyGetListCompletionMethod,
-    scnSetSizeFromParent,
     scnGetHwnd,
     scnEnableEvents
 ) where 
@@ -33,111 +33,21 @@ import Foreign.Ptr
 
 type HHOOK = Word64
 
--- HHOOK WINAPI SetWindowsHookEx(
---   _In_ int       idHook,
---   _In_ HOOKPROC  lpfn,
---   _In_ HINSTANCE hMod,
---   _In_ DWORD     dwThreadId
--- );
-foreign import ccall unsafe "SetWindowsHookExW"
-    c_SetWindowsHookEx :: Int32 -> FunPtr (Int32 -> WPARAM -> Ptr (CWPSTRUCT) -> IO (LRESULT)) -> HINSTANCE -> DWORD -> IO (HHOOK)        
-           
--- LRESULT WINAPI CallNextHookEx(
---   _In_opt_ HHOOK  hhk,
---   _In_     int    nCode,
---   _In_     WPARAM wParam,
---   _In_     LPARAM lParam
--- );
-foreign import ccall unsafe "CallNextHookEx"
-    c_CallNextHookEx :: HHOOK -> Int32 -> WPARAM -> LPARAM -> IO (LRESULT)
-    
--- BOOL WINAPI UnhookWindowsHookEx(
---   _In_ HHOOK hhk
--- );  
-foreign import ccall unsafe "UnhookWindowsHookEx"
-    c_UnhookWindowsHookEx :: HHOOK-> IO (BOOL)
-  
+-- imports from ScintillaProxy.dll
+foreign import ccall unsafe "ScnNewEditor"     c_ScnNewEditor :: HWND -> IO (HWND)      
+foreign import ccall unsafe "ScnDestroyEditor" c_ScnDestroyEditor :: HWND -> IO ()      
+foreign import ccall unsafe "ScnSendEditor"    c_ScnSendEditor :: HWND -> Word32 -> WPARAM -> LPARAM -> IO (LRESULT)
+foreign import ccall unsafe "ScnEnableEvents"  c_ScnEnableEvents :: HWND -> FunPtr (Ptr (SCNotification) -> IO ()) -> IO (Int32)
+foreign import ccall unsafe "ScnDisableEvents" c_ScnDisableEvents :: HWND -> IO ()      
 
--- LRESULT CALLBACK CallWndProc(
---   _In_ int    nCode,
---   _In_ WPARAM wParam,
---   _In_ LPARAM lParam
--- );
---foreign export ccall scnCallWndProc :: Int32 -> WPARAM -> LPARAM -> IO (LRESULT)
-foreign import ccall safe "wrapper" scnCreateCallWndProc :: 
-    (Int32 -> WPARAM -> Ptr (CWPSTRUCT) -> IO(LRESULT)) -> IO (FunPtr (Int32 -> WPARAM -> Ptr (CWPSTRUCT) -> IO(LRESULT)))
- 
--- BOOL WINAPI SetWindowPos(
---   _In_     HWND hWnd,
---   _In_opt_ HWND hWndInsertAfter,
---   _In_     int  X,
---   _In_     int  Y,
---   _In_     int  cx,
---   _In_     int  cy,
---   _In_     UINT uFlags
--- );
-foreign import ccall unsafe "SetWindowPos"
-    c_SetWindowPos :: HWND -> HWND -> Int32 -> Int32 -> Int32 -> Int32 -> Word32 -> IO (Word32)
-                  
--- BOOL WINAPI GetWindowRect(
---   _In_  HWND   hWnd,
---   _Out_ LPRECT lpRect
--- );    
-foreign import ccall unsafe "GetWindowRect"
-    c_GetWindowRec :: HWND -> Ptr (ScnRect) -> IO (Word32) 
+-- callback wrapper
+foreign import ccall safe "wrapper" createCallback ::
+    (Ptr (SCNotification) -> IO ()) -> IO (FunPtr (Ptr (SCNotification) -> IO ()))
 
--- DWORD WINAPI GetCurrentThreadId(void)
-foreign import ccall unsafe "GetCurrentThreadId"
-    c_GetCurrentThreadId :: IO (Word32) 
-     
 --------------------------------------------------------------
 -- data types
 --------------------------------------------------------------
-
-data CWPSTRUCT = CWPSTRUCT
-    {
-        cwpLParam   :: Word64,
-        cwpWParam   :: Word64,
-        cwpMessage  :: Word32,
-        cwpHWnd     :: Word64
-    }
-                   
-instance Storable CWPSTRUCT where
-    alignment _ = 8
-    sizeOf _    = 32
-    peek ptr    = CWPSTRUCT
-        <$> peekByteOff ptr 0
-        <*> peekByteOff ptr 8
-        <*> peekByteOff ptr 16 
-        <*> peekByteOff ptr 24
-    poke ptr (CWPSTRUCT cwpLParam cwpWParam cwpMessage cwpHWnd) = do
-        pokeByteOff ptr 0     cwpLParam
-        pokeByteOff ptr 8     cwpWParam
-        pokeByteOff ptr 16    cwpMessage                
-        pokeByteOff ptr 24    cwpHWnd 
-       
-data ScnRect = ScnRect
-    {
-        recLeft   :: Int32,
-        recTop    :: Int32,
-        recRight  :: Int32,
-        recBottom :: Int32
-    }
-                   
-instance Storable ScnRect where
-    alignment _ = 8
-    sizeOf _    = 16
-    peek ptr    = ScnRect
-        <$> peekByteOff ptr 0
-        <*> peekByteOff ptr 4
-        <*> peekByteOff ptr 8 
-        <*> peekByteOff ptr 12
-    poke ptr (ScnRect recLeft recTop recRight recBottom) = do
-        pokeByteOff ptr 0     recLeft
-        pokeByteOff ptr 4     recTop
-        pokeByteOff ptr 18    recRight                
-        pokeByteOff ptr 12    recBottom 
-        
+      
 -- Structure for Scintilla Notification (64 bit version)
 -- See Scintilla.h SCNotification for original       
 data  SCNotification = SCNotification
@@ -262,13 +172,10 @@ instance Storable SCNotification where
             pokeByteOff ptr 144   updated
             pokeByteOff ptr 148   listCompletionMethod                 
            
-
 data ScnEditor = ScnEditor 
     { 
         hParent     :: HWND,
         hScnWnd     :: HWND, 
-        hDll        :: HINSTANCE, 
-        hHook       :: HHOOK,
         events      :: Maybe (SCNotification -> IO ())
     }  
  
@@ -278,22 +185,12 @@ data ScnEditor = ScnEditor
 -- parent = HWND of parent window
 scnCreateEditor :: HWND -> IO (ScnEditor)
 scnCreateEditor parent = do
-    hDll <- loadLibrary "SciLexer64.dll"
-    scnHwnd <- createWindow (mkClassName "Scintilla") "Source" (wS_CHILD + wS_VSCROLL + wS_HSCROLL + wS_CLIPCHILDREN) 
-        (Just 0)  (Just 0)  (Just 500)  (Just 500) (Just parent) Nothing hDll scnWinClose                    
-    showWindow scnHwnd sW_SHOW     
-    v <- varCreate (ScnEditor parent scnHwnd hDll 0 Nothing)
+    hwnd <- c_ScnNewEditor parent
+    v <- varCreate (ScnEditor parent hwnd Nothing)
     scn <- varGet v
-    scnSetSizeFromParent scn
     return (scn)
-  
-scnWinClose :: HWND ->  WindowMessage -> WPARAM -> LPARAM -> IO LRESULT
-scnWinClose _ _ _ _ = do 
-    return (0)
- 
-scnGetHwnd :: ScnEditor -> HWND
-scnGetHwnd (ScnEditor _ scnHwnd _ _ _) = scnHwnd
-  
+    
+{-
 scnSetSizeFromParent :: ScnEditor -> IO ()
 scnSetSizeFromParent scn = do
     alloca (scnSetSize scn)
@@ -305,6 +202,28 @@ scnSetSize (ScnEditor p c _ _ _) rect = do
     (ScnRect l t r b) <- peek rect
     c_SetWindowPos c hWND_TOP 0 0 (r-l) (b-t) sWP_NOMOVE
     return ()
+-}
+
+scnEnableEvents :: ScnEditor -> (SCNotification -> IO ()) -> IO (ScnEditor)
+scnEnableEvents (ScnEditor p c _) f = do
+    let s = (ScnEditor p c (Just f))
+    cb <- createCallback $ scnCallback s
+    c_ScnEnableEvents c cb    
+    return (s)
+
+-- the callback from ScintillaProxy dll    
+scnCallback :: ScnEditor -> Ptr (SCNotification) -> IO ()
+scnCallback (ScnEditor _ _ Nothing) _ = return ()
+scnCallback (ScnEditor _ _ (Just f)) p = do
+    n <- peek p
+    f n
+    return () 
+
+scnGetHwnd :: ScnEditor -> HWND
+scnGetHwnd (ScnEditor _ h _) = h
+
+scnNotifyGetCode :: SCNotification -> Word32
+scnNotifyGetCode (SCNotification _ _ x _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _) = x           
 
 scnNotifyGetPosition :: SCNotification -> Int64
 scnNotifyGetPosition (SCNotification _ _ _ x _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _) = x           
@@ -315,32 +234,3 @@ scnNotifyGetWParam (SCNotification _ _ _ _ _ _ _ _ _ _ _ x _ _ _ _ _ _ _ _ _ _ _
 scnNotifyGetListCompletionMethod :: SCNotification -> Int32
 scnNotifyGetListCompletionMethod (SCNotification _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ x) = x           
 
-scnEnableEvents :: ScnEditor -> Maybe (SCNotification -> IO ()) -> IO (ScnEditor)
-scnEnableEvents scn@(ScnEditor p c lib hk f) f' = do
-    callback <- scnCreateCallWndProc (scnCallWndProc scn)
-    tid <- c_GetCurrentThreadId
-    c_SetWindowsHookEx 4 callback nullPtr tid
-    return (ScnEditor p c lib hk f')
-   
--- Windows Hook callback
-scnCallWndProc :: ScnEditor -> Int32 -> WPARAM -> Ptr (CWPSTRUCT) -> IO (LRESULT) 
-scnCallWndProc scn code _ lparam = do
-    if code < 0
-    then
-        return (0)
-    else
-        do
-        (CWPSTRUCT lp wp m h) <- peek lparam
-        if m = wM_NOTIFY
-        then
-            
-        else        
-        return (0)
-
-   
---    f' scn
-
-
- 
-
- 

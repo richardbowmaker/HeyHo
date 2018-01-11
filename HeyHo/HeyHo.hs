@@ -27,19 +27,6 @@ foreign import ccall "libc.h exp" c_exp :: Double -> Double
 foreign import ccall "math.h sin" c_sin :: CDouble -> CDouble
 foreign import ccall unsafe "SetWindowPos" c_SetWindowPos :: HWND -> HWND -> Int -> Int -> Int -> Int -> Word32 -> IO (Int)
 
-foreign import ccall unsafe "fnTheDll" c_fnTheDll :: HWND -> IO (CInt)
-foreign import ccall "GetFnPtr" c_GetFnPtr :: Ptr SCNotification
-foreign import ccall "dynamic" doublePtr :: FunPtr (Int -> Int) -> (Int -> Int)
-
-foreign import ccall unsafe "SetFnPtr" c_SetFnPtr :: FunPtr (Int -> IO (Int)) -> IO ()
-foreign import ccall unsafe "UseFnPtr" c_UseFnPtr :: Int -> IO (Int)
-
-foreign import ccall unsafe "HookWindow" c_HookWindow :: IO (CInt)
-foreign import ccall unsafe "UnhookWindow" c_UnhookWindow :: IO ()
-
-
-myDouble :: Int -> Int
-myDouble = doublePtr (castPtrToFunPtr c_GetFnPtr)
 
 -- timesThree export
 foreign export ccall timesThree :: Int -> Int
@@ -70,14 +57,16 @@ mainGUI = do
 
 
     f <- frame [] 
-    p <- panel  f []
+    p1 <- panel  f []
+    p2 <- panel  f []
     
     set f [ text:= "HeyHo", bgcolor := white]
            
     b  <- button f [text := "Test xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]   
     set b [on command := cmdTest b]
 
-    txt <- textEntry f [text := "..."]
+    t1 <- textEntry f [text := "..."]
+    t2 <- textEntry f [text := "..."]
  
  
 --     someIOPtr <- createSomeIO (someIO' p)
@@ -91,22 +80,25 @@ mainGUI = do
    
 
 --  set f [ layout := minsize (sz 400 400) $ fill $ widget p]
-    set f [ layout := column 10 [ (minsize (sz 400 400) $ fill $ widget p), (widget txt) ] ]
+    set f [ layout := column 10 [ (minsize (sz 200 200) $ fill $ widget p1), (minsize (sz 200 200) $ fill $ widget p2), (widget t1), (widget t2) ] ]
     set f [ size := (Size 500 500)]
     
 --    scn <- peek c_GetFnPtr
 --    set b [ text := "return " ++ showHex (scnNotifyGetWParam scn) "" ]
    
-    hwnd <- windowGetHandle p
-    scn <- scnCreateEditor hwnd
-    scn <- scnEnableEvents scn Nothing
+    hwnd1 <- windowGetHandle p1
+    scn1 <- scnCreateEditor hwnd1
+    scn1 <- scnEnableEvents scn1 $ eventHandler t1
+
+    hwnd2 <- windowGetHandle p2
+    scn2 <- scnCreateEditor hwnd2
+    scn2 <- scnEnableEvents scn2 $ eventHandler t2
 
      
 
---    c_HookWindow
 
    
-    set p [on resize := scnSetSizeFromParent scn]
+    --set p [on resize := scnSetSizeFromParent scn]
 
 --    (Size x y) <- get p size
 --    c_SetWindowPos scnHwnd hWND_TOP 0 0 x y sWP_NOMOVE
@@ -115,17 +107,21 @@ mainGUI = do
     
     return ()
     
+eventHandler :: TextCtrl () -> SCNotification -> IO ()
+eventHandler t n = do
+    set t [text := "event!! " ++ show (scnNotifyGetCode n) ++ "   "]
+    repaint t
+    return ()    
     
 panelResize' :: Panel() -> HWND -> IO ()
 panelResize' p hwnd = do
     (Size x y) <- get p size
     c_SetWindowPos hwnd hWND_TOP 0 0 x y sWP_NOMOVE
     return ()
-
-   
+  
 panelResize :: ScnEditor -> IO ()
 panelResize scn = do
-    scnSetSizeFromParent scn
+--    scnSetSizeFromParent scn
     return ()
     
 cmdTest :: Button () -> IO ()
