@@ -40,7 +40,7 @@ type HHOOK = Word64
 --   _In_ DWORD     dwThreadId
 -- );
 foreign import ccall unsafe "SetWindowsHookExW"
-    c_SetWindowsHookEx :: Int32 -> FunPtr (Int32 -> WPARAM -> LPARAM -> IO (LRESULT)) -> HINSTANCE -> DWORD -> IO (HHOOK)        
+    c_SetWindowsHookEx :: Int32 -> FunPtr (Int32 -> WPARAM -> Ptr (CWPSTRUCT) -> IO (LRESULT)) -> HINSTANCE -> DWORD -> IO (HHOOK)        
            
 -- LRESULT WINAPI CallNextHookEx(
 --   _In_opt_ HHOOK  hhk,
@@ -65,7 +65,7 @@ foreign import ccall unsafe "UnhookWindowsHookEx"
 -- );
 --foreign export ccall scnCallWndProc :: Int32 -> WPARAM -> LPARAM -> IO (LRESULT)
 foreign import ccall safe "wrapper" scnCreateCallWndProc :: 
-    (Int32 -> WPARAM -> LPARAM -> IO(LRESULT)) -> IO (FunPtr (Int32 -> WPARAM -> LPARAM -> IO(LRESULT)))
+    (Int32 -> WPARAM -> Ptr (CWPSTRUCT) -> IO(LRESULT)) -> IO (FunPtr (Int32 -> WPARAM -> Ptr (CWPSTRUCT) -> IO(LRESULT)))
  
 -- BOOL WINAPI SetWindowPos(
 --   _In_     HWND hWnd,
@@ -94,6 +94,28 @@ foreign import ccall unsafe "GetCurrentThreadId"
 -- data types
 --------------------------------------------------------------
 
+data CWPSTRUCT = CWPSTRUCT
+    {
+        cwpLParam   :: Word64,
+        cwpWParam   :: Word64,
+        cwpMessage  :: Word32,
+        cwpHWnd     :: Word64
+    }
+                   
+instance Storable CWPSTRUCT where
+    alignment _ = 8
+    sizeOf _    = 32
+    peek ptr    = CWPSTRUCT
+        <$> peekByteOff ptr 0
+        <*> peekByteOff ptr 8
+        <*> peekByteOff ptr 16 
+        <*> peekByteOff ptr 24
+    poke ptr (CWPSTRUCT cwpLParam cwpWParam cwpMessage cwpHWnd) = do
+        pokeByteOff ptr 0     cwpLParam
+        pokeByteOff ptr 8     cwpWParam
+        pokeByteOff ptr 16    cwpMessage                
+        pokeByteOff ptr 24    cwpHWnd 
+       
 data ScnRect = ScnRect
     {
         recLeft   :: Int32,
@@ -301,11 +323,24 @@ scnEnableEvents scn@(ScnEditor p c lib hk f) f' = do
     return (ScnEditor p c lib hk f')
    
 -- Windows Hook callback
-scnCallWndProc :: ScnEditor -> Int32 -> WPARAM -> LPARAM -> IO (LRESULT) 
-scnCallWndProc _ _ _ _ = do
-    messageBox nullHANDLE "In SCN" "In SCN" mB_OK
-    return (0)
+scnCallWndProc :: ScnEditor -> Int32 -> WPARAM -> Ptr (CWPSTRUCT) -> IO (LRESULT) 
+scnCallWndProc scn code _ lparam = do
+    if code < 0
+    then
+        return (0)
+    else
+        do
+        (CWPSTRUCT lp wp m h) <- peek lparam
+        if m = wM_NOTIFY
+        then
+            
+        else        
+        return (0)
 
-    
+   
+--    f' scn
+
+
+ 
 
  
