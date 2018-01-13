@@ -3,6 +3,7 @@ module Main where
 import Graphics.UI.WX
 import Graphics.UI.WXCore
 import Scintilla
+import Data.ByteString.Char8 (pack)
 
 main = start mainGUI
 
@@ -57,20 +58,24 @@ mainGUI = do
     auiManagerAddPaneByPaneInfo auiMgr p api
     
              
---    menuFileOpen <- menuItemCreate
---    menuItemSetItemLabel menuFileOpen "Open"
     
-    menuFile <- menuCreate "Open" 0
- --   menuAppendItem menuFile menuFileOpen
+    menuFileOpen <- menuCreate "Open" 0 
+    menuFileClose <- menuCreate "Close" 0 
     
     mbar <- menuBarCreate 0
-    menuBarAppend mbar menuFile "&File"
+    menuBarAppend mbar menuFileOpen "&File"
+    menuBarAppend mbar menuFileClose "&File"
     
     frameSetMenuBar f mbar
  
     auiManagerUpdate auiMgr
 
+    let bs = pack "hello world!"
+    scnSetText scn bs
+
+    
     set f [on closing := onClosing f auiMgr scn]
+    
      
     return ()
 

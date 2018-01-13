@@ -8,25 +8,24 @@ module Scintilla
     scnNotifyGetListCompletionMethod,
     scnGetHwnd,
     scnEnableEvents,
-    scnDisableEvents
+    scnDisableEvents,
+    scnSetText
 ) where 
     
-import Numeric
 import Control.Applicative ((<$>), (<*>))
 import Foreign.Storable
 import Data.Word
 import Data.Int
 
-import System.Win32.DLL
 import System.Win32.Types
-import Graphics.Win32.Window
 import Graphics.Win32.GDI.Types
-import Graphics.Win32.Message
-import Graphics.Win32.Misc
 
 import Graphics.UI.WXCore
-import Foreign.Marshal.Alloc
 import Foreign.Ptr
+import Foreign.ForeignPtr
+import Foreign.C.String (CString)
+import Data.ByteString
+import Data.ByteString.Internal
 
 -----------------------
 -- Windows API calls --
@@ -35,11 +34,11 @@ import Foreign.Ptr
 type HHOOK = Word64
 
 -- imports from ScintillaProxy.dll
-foreign import ccall unsafe "ScnNewEditor"     c_ScnNewEditor :: HWND -> IO (HWND)      
-foreign import ccall unsafe "ScnDestroyEditor" c_ScnDestroyEditor :: HWND -> IO ()      
-foreign import ccall unsafe "ScnSendEditor"    c_ScnSendEditor :: HWND -> Word32 -> WPARAM -> LPARAM -> IO (LRESULT)
-foreign import ccall unsafe "ScnEnableEvents"  c_ScnEnableEvents :: HWND -> FunPtr (Ptr (SCNotification) -> IO ()) -> IO (Int32)
-foreign import ccall unsafe "ScnDisableEvents" c_ScnDisableEvents :: HWND -> IO ()      
+foreign import ccall safe "ScnNewEditor"     c_ScnNewEditor :: HWND -> IO (HWND)      
+foreign import ccall safe "ScnDestroyEditor" c_ScnDestroyEditor :: HWND -> IO ()      
+foreign import ccall safe "ScnSendEditor"    c_ScnSendEditor :: HWND -> Word32 -> WPARAM -> LPARAM -> IO (LRESULT)
+foreign import ccall safe "ScnEnableEvents"  c_ScnEnableEvents :: HWND -> FunPtr (Ptr (SCNotification) -> IO ()) -> IO (Int32)
+foreign import ccall safe "ScnDisableEvents" c_ScnDisableEvents :: HWND -> IO ()      
 
 -- callback wrapper
 foreign import ccall safe "wrapper" createCallback ::
@@ -191,20 +190,6 @@ scnCreateEditor parent = do
     scn <- varGet v
     return (scn)
     
-{-
-scnSetSizeFromParent :: ScnEditor -> IO ()
-scnSetSizeFromParent scn = do
-    alloca (scnSetSize scn)
-    return ()
-
-scnSetSize :: ScnEditor -> Ptr (ScnRect) -> IO ()
-scnSetSize (ScnEditor p c _ _ _) rect = do
-    c_GetWindowRec p rect
-    (ScnRect l t r b) <- peek rect
-    c_SetWindowPos c hWND_TOP 0 0 (r-l) (b-t) sWP_NOMOVE
-    return ()
--}
-
 scnEnableEvents :: ScnEditor -> (SCNotification -> IO ()) -> IO (ScnEditor)
 scnEnableEvents (ScnEditor p c _) f = do
     let s = (ScnEditor p c (Just f))
@@ -212,11 +197,11 @@ scnEnableEvents (ScnEditor p c _) f = do
     c_ScnEnableEvents c cb    
     return (s)
 
-scnDisableEvents :: ScnEditor -> IO ()
+scnDisableEvents :: ScnEditor -> IO (ScnEditor)
 scnDisableEvents (ScnEditor p c _) = do
     let s = (ScnEditor p c Nothing)
     c_ScnDisableEvents c    
-    return ()
+    return (s)
 
 -- the callback from ScintillaProxy dll    
 scnCallback :: ScnEditor -> Ptr (SCNotification) -> IO ()
@@ -240,4 +225,19 @@ scnNotifyGetWParam (SCNotification _ _ _ _ _ _ _ _ _ _ _ x _ _ _ _ _ _ _ _ _ _ _
 
 scnNotifyGetListCompletionMethod :: SCNotification -> Int32
 scnNotifyGetListCompletionMethod (SCNotification _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ x) = x           
+
+------------------------------------------------------------    
+-- Scintilla commands
+------------------------------------------------------------    
+
+scnSetText :: ScnEditor -> ByteString -> IO ()
+scnSetText e s = do
+    let (fp, _, _) = toForeignPtr s
+    add <- withForeignPtr fp (\p -> return (minusPtr p nullPtr)) 
+    c_ScnSendEditor (scnGetHwnd e) 2181 0 (fromIntegral add :: Int32)
+--    c_ScnSendEditor (scnGetHwnd e) 2181 0 0
+    return ()
+
+
+    --peekCString
 
