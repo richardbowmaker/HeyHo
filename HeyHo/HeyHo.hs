@@ -1,139 +1,155 @@
-{-# LANGUAGE ForeignFunctionInterface #-}
 
 module Main where
 import Graphics.UI.WX
 import Graphics.UI.WXCore
-
-
-import Foreign
-import Foreign.C.Types
-import Foreign.C.String
-
-import System.Win32.DLL
-import System.Win32.Types
-import Graphics.Win32.Window
-import Graphics.Win32.GDI.Types
-import Graphics.Win32.Message
-
-import Numeric
-import Control.Applicative ((<$>), (<*>))
-
 import Scintilla
 
-
-
-
-foreign import ccall "libc.h exp" c_exp :: Double -> Double
-foreign import ccall "math.h sin" c_sin :: CDouble -> CDouble
-foreign import ccall unsafe "SetWindowPos" c_SetWindowPos :: HWND -> HWND -> Int -> Int -> Int -> Int -> Word32 -> IO (Int)
-
-
--- timesThree export
-foreign export ccall timesThree :: Int -> Int
-foreign import ccall safe "wrapper" createTimesThreePtr :: (Int -> Int) -> IO (FunPtr (Int -> Int))
-timesThree :: Int -> Int
-timesThree x = 3*x
- 
--- Some IO callback export
-foreign export ccall someIO :: Int -> IO (Int)
-foreign import ccall safe "wrapper" createSomeIO :: (Int -> IO (Int)) -> IO (FunPtr (Int -> IO (Int)))
-someIO :: Int -> IO (Int)
-someIO x = do
-    return (3*x)
-  
-someIO' :: Panel() -> Int -> IO (Int)
-someIO' p x = do
-    infoDialog p "mess1" "mess2"
-    return (3*x)
-
-  
-    
 main = start mainGUI
-
-data Drag = Drag { downAt :: Point, at :: Point }
 
 mainGUI :: IO ()
 mainGUI = do 
 
-
     f <- frame [] 
-    p1 <- panel  f []
-    p2 <- panel  f []
     
-    set f [ text:= "HeyHo", bgcolor := white]
-           
-    b  <- button f [text := "Test xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]   
-    set b [on command := cmdTest b]
+    set f [ text := "Aui Test", 
+            size := (Size 500 500)]
+                       
+    auiMgr <- auiManagerCreate f wxAUI_MGR_DEFAULT
+      
+    -- add dockable tree
+    tree <- createTree f   
+    api <- auiPaneInfoCreateDefault
+    auiPaneInfoCaption api "Tree Control"
+    auiPaneInfoLeft api
+    auiPaneInfoLayer api 1
+    auiPaneInfoPosition api 1
+    auiPaneInfoCloseButton api True
+    auiPaneInfoMaximizeButton api True
+    
+    auiManagerAddPaneByPaneInfo auiMgr tree api
+    
+    -- add dockable grid
+    grid <- createGrid f
+    api <- auiPaneInfoCreateDefault
+    auiPaneInfoCaption api "Grid Control"
+    auiPaneInfoBottom api
+    auiPaneInfoLayer api 1
+    auiPaneInfoPosition api 1
+    auiPaneInfoCloseButton api True
+    auiPaneInfoMaximizeButton api True
+    
+    auiManagerAddPaneByPaneInfo auiMgr grid api
+    
+    -- add scintilla editor
+    p <- panel f []
+    hwnd <- windowGetHandle p
+    scn <- scnCreateEditor hwnd
+    scnEnableEvents scn scnCallback
+    
+    api <- auiPaneInfoCreateDefault
+    auiPaneInfoCaption api "Scintilla"
+    auiPaneInfoCentre api
+    auiPaneInfoLayer api 1
+    auiPaneInfoPosition api 1
+    auiPaneInfoCloseButton api True
+    auiPaneInfoMaximizeButton api True
 
-    t1 <- textEntry f [text := "..."]
-    t2 <- textEntry f [text := "..."]
+    auiManagerAddPaneByPaneInfo auiMgr p api
+    
+             
+--    menuFileOpen <- menuItemCreate
+--    menuItemSetItemLabel menuFileOpen "Open"
+    
+    menuFile <- menuCreate "Open" 0
+ --   menuAppendItem menuFile menuFileOpen
+    
+    mbar <- menuBarCreate 0
+    menuBarAppend mbar menuFile "&File"
+    
+    frameSetMenuBar f mbar
  
- 
---     someIOPtr <- createSomeIO (someIO' p)
---    c_SetFnPtr someIOPtr
-  
-    
---    timesThreePtr <- createTimesThreePtr timesThree
---    c_SetFnPtr timesThreePtr
---    n <- c_UseFnPtr 3
---    set txt [text := "answer = " ++ show n]
-   
+    auiManagerUpdate auiMgr
 
---  set f [ layout := minsize (sz 400 400) $ fill $ widget p]
-    set f [ layout := column 10 [ (minsize (sz 200 200) $ fill $ widget p1), (minsize (sz 200 200) $ fill $ widget p2), (widget t1), (widget t2) ] ]
-    set f [ size := (Size 500 500)]
-    
---    scn <- peek c_GetFnPtr
---    set b [ text := "return " ++ showHex (scnNotifyGetWParam scn) "" ]
-   
-    hwnd1 <- windowGetHandle p1
-    scn1 <- scnCreateEditor hwnd1
-    scn1 <- scnEnableEvents scn1 $ eventHandler t1
-
-    hwnd2 <- windowGetHandle p2
-    scn2 <- scnCreateEditor hwnd2
-    scn2 <- scnEnableEvents scn2 $ eventHandler t2
-
+    set f [on closing := onClosing f auiMgr scn]
      
-
-
-   
-    --set p [on resize := scnSetSizeFromParent scn]
-
---    (Size x y) <- get p size
---    c_SetWindowPos scnHwnd hWND_TOP 0 0 x y sWP_NOMOVE
-
---    freeHaskellFunPtr timesThreePtr
-    
-    return ()
-    
-eventHandler :: TextCtrl () -> SCNotification -> IO ()
-eventHandler t n = do
-    set t [text := "event!! " ++ show (scnNotifyGetCode n) ++ "   "]
-    repaint t
-    return ()    
-    
-panelResize' :: Panel() -> HWND -> IO ()
-panelResize' p hwnd = do
-    (Size x y) <- get p size
-    c_SetWindowPos hwnd hWND_TOP 0 0 x y sWP_NOMOVE
-    return ()
-  
-panelResize :: ScnEditor -> IO ()
-panelResize scn = do
---    scnSetSizeFromParent scn
-    return ()
-    
-cmdTest :: Button () -> IO ()
-cmdTest b = do
-    set b [ text := "Clicked! "]
---    c_UnhookWindow
     return ()
 
-    
-winClose :: HWND ->  WindowMessage -> WPARAM -> LPARAM -> IO LRESULT
-winClose _ _ _ _ = do 
-    return (0)
-   
+------------------------------------------------------------    
+-- Event handlers
+------------------------------------------------------------    
 
+onClosing :: Frame() -> AuiManager() -> ScnEditor -> IO ()
+onClosing f aui scn = do 
+    scnDisableEvents scn
+    auiManagerUnInit aui
+    windowDestroy f
+    return ()
+
+scnCallback :: SCNotification -> IO ()
+scnCallback _ = return ()
     
+------------------------------------------------------------    
+-- Tree Control
+------------------------------------------------------------    
+    
+createTree :: Frame () ->  IO (TreeCtrl ())
+createTree f = do      
+    tree <- treeCtrl f []
+    root <- treeCtrlAddRoot tree "root" (-1) (-1) objectNull     
+    _    <- treeCtrlAppendItem tree root "item1" (-1) (-1) objectNull
+    _    <- treeCtrlAppendItem tree root "item2" (-1) (-1) objectNull
+    _    <- treeCtrlAppendItem tree root "item3" (-1) (-1) objectNull
+    treeCtrlExpand tree root
+    cs <- treeCtrlGetChildren tree root
+    return (tree)
+    
+------------------------------------------------------------    
+-- Grid Control
+------------------------------------------------------------    
+
+createGrid :: Frame () -> IO (Grid ())
+createGrid f = do
+    -- grids
+    g <- gridCtrl f []
+    gridSetGridLineColour g (colorSystem Color3DFace)
+    gridSetCellHighlightColour g black
+    appendColumns g (head names)
+    appendRows    g (map show [1..length (tail names)])
+    mapM_ (setRow g) (zip [0..] (tail names))
+    gridAutoSize g  
+    return (g)
+    
+gridCtrl :: Window a -> [Prop (Grid ())] -> IO (Grid ())
+gridCtrl parent_ props_
+  = feed2 props_ 0 $
+    initialWindow $ \id_ rect' -> \props' flags ->
+    do g <- gridCreate parent_ id_ rect' flags
+       gridCreateGrid g 0 0 0
+       set g props'
+       return g
+
+appendColumns :: Grid a -> [String] -> IO ()
+appendColumns _g []
+  = return ()
+appendColumns g labels
+  = do n <- gridGetNumberCols g
+       _ <- gridAppendCols g (length labels) True
+       mapM_ (\(i, label_) -> gridSetColLabelValue g i label_) (zip [n..] labels)
+
+appendRows :: Grid a -> [String] -> IO ()
+appendRows _g []
+  = return ()
+appendRows g labels
+  = do n <- gridGetNumberRows g
+       _ <- gridAppendRows g (length labels) True
+       mapM_ (\(i, label_) -> gridSetRowLabelValue g i label_) (zip [n..] labels)
+
+setRow :: Grid a -> (Int, [String]) -> IO ()
+setRow g (row_, values)
+  = mapM_ (\(col,value_) -> gridSetCellValue g row_ col value_) (zip [0..] values)
+
+names :: [[String]]
+names
+  = [["First Name", "Last Name"]
+    ,["Daan","Leijen"],["Arjan","van IJzendoorn"]
+    ,["Martijn","Schrage"],["Andres","Loh"]]

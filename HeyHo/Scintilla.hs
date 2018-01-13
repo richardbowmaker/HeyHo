@@ -7,7 +7,8 @@ module Scintilla
     scnNotifyGetWParam,
     scnNotifyGetListCompletionMethod,
     scnGetHwnd,
-    scnEnableEvents
+    scnEnableEvents,
+    scnDisableEvents
 ) where 
     
 import Numeric
@@ -210,6 +211,12 @@ scnEnableEvents (ScnEditor p c _) f = do
     cb <- createCallback $ scnCallback s
     c_ScnEnableEvents c cb    
     return (s)
+
+scnDisableEvents :: ScnEditor -> IO ()
+scnDisableEvents (ScnEditor p c _) = do
+    let s = (ScnEditor p c Nothing)
+    c_ScnDisableEvents c    
+    return ()
 
 -- the callback from ScintillaProxy dll    
 scnCallback :: ScnEditor -> Ptr (SCNotification) -> IO ()

@@ -2,54 +2,74 @@
 module Main where
 import Graphics.UI.WX
 import Graphics.UI.WXCore
+import Scintilla
 
 main = start mainGUI
 
 mainGUI :: IO ()
 mainGUI = do 
 
-
-
     f <- frame [] 
-    p <- panel f []
-    b <- button f [text:= "Close"] 
     
     set f [ text := "Aui Test", 
             size := (Size 500 500)]
                        
-    set f [ layout := column 10 [(minsize (sz 400 400) $ fill $ widget p), (fill $ widget b)]]  
-
-
-    auiMgr <- auiManagerCreate p wxAUI_MGR_DEFAULT
+    auiMgr <- auiManagerCreate f wxAUI_MGR_DEFAULT
       
-    tree <- createTree f
-    
+    -- add dockable tree
+    tree <- createTree f   
     api <- auiPaneInfoCreateDefault
-    api <- auiPaneInfoBottomDockable api True
-    api <- auiPaneInfoCaption api "Tree Control"
-    api <- auiPaneInfoLeft api
-    api <- auiPaneInfoLayer api 1
-    api <- auiPaneInfoPosition api 1
-    api <- auiPaneInfoCloseButton api True
-    api <- auiPaneInfoMaximizeButton api True
+    auiPaneInfoCaption api "Tree Control"
+    auiPaneInfoLeft api
+    auiPaneInfoLayer api 1
+    auiPaneInfoPosition api 1
+    auiPaneInfoCloseButton api True
+    auiPaneInfoMaximizeButton api True
     
     auiManagerAddPaneByPaneInfo auiMgr tree api
     
+    -- add dockable grid
     grid <- createGrid f
-
     api <- auiPaneInfoCreateDefault
-    api <- auiPaneInfoTopDockable api True
-    api <- auiPaneInfoCaption api "Grid Control"
-    api <- auiPaneInfoRight api
-    api <- auiPaneInfoLayer api 1
-    api <- auiPaneInfoPosition api 1
-    api <- auiPaneInfoCloseButton api True
-    api <- auiPaneInfoMaximizeButton api True
+    auiPaneInfoCaption api "Grid Control"
+    auiPaneInfoRight api
+    auiPaneInfoLayer api 1
+    auiPaneInfoPosition api 1
+    auiPaneInfoCloseButton api True
+    auiPaneInfoMaximizeButton api True
     
     auiManagerAddPaneByPaneInfo auiMgr grid api
-          
-    auiManagerUpdate auiMgr
+    
+    -- add scintilla editor
+    p <- panel f []
+    hwnd <- windowGetHandle p
+    scn <- scnCreateEditor hwnd
+    
+    set p [ bgcolor := red ]
+    api <- auiPaneInfoCreateDefault
+    auiPaneInfoCaption api "Scintilla"
+    auiPaneInfoCentre api
+    auiPaneInfoLayer api 1
+    auiPaneInfoPosition api 1
+    auiPaneInfoCloseButton api True
+    auiPaneInfoMaximizeButton api True
+
+    auiManagerAddPaneByPaneInfo auiMgr p api
+    
+             
+--    menuFileOpen <- menuItemCreate
+--    menuItemSetItemLabel menuFileOpen "Open"
+    
+    menuFile <- menuCreate "Open" 0
+ --   menuAppendItem menuFile menuFileOpen
+    
+    mbar <- menuBarCreate 0
+    menuBarAppend mbar menuFile "&File"
+    
+    frameSetMenuBar f mbar
  
+    auiManagerUpdate auiMgr
+
     set f [on closing := onClosing f auiMgr]
      
     return ()
