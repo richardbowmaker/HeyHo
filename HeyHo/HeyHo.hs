@@ -147,14 +147,16 @@ fileOpen f scn = do                                       -- wxFD_OPEN wxFD_FILE
 -- Notebook
 ------------------------------------------------------------    
 
-createNoteBook :: Frame () -> IO (Notebook ())
+createNoteBook :: Frame () -> IO (AuiNotebook ())
 createNoteBook f = do
-    nb <- notebookCreate f idAny rectNull ( wxCLIP_CHILDREN + wxAUI_NB_BOTTOM)
+    nb <- auiNotebookCreate f idAny (Point 0 0) (Size 0 0) (wxCLIP_CHILDREN + wxAUI_NB_BOTTOM)
     set nb [] 
     p <- panel nb []
     hwnd <- windowGetHandle p
     scn <- scnCreateEditor hwnd
-    notebookAddPage nb p "Example" False 0        
+    auiNotebookAddPage nb p "Example" False 0
+    ta <- auiSimpleTabArtCreate
+    auiNotebookSetArtProvider nb ta
     return (nb)
 ------------------------------------------------------------    
 -- Tree Control
