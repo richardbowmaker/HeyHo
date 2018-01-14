@@ -9,7 +9,9 @@ module Scintilla
     scnGetHwnd,
     scnEnableEvents,
     scnDisableEvents,
-    scnSetText
+    scnSetText,
+    scnGetAllText,
+    scnGetTextLen,
 ) where 
     
 import Control.Applicative ((<$>), (<*>))
@@ -24,9 +26,10 @@ import Graphics.UI.WXCore
 import Foreign.Ptr
 import Foreign.ForeignPtr
 import Foreign.C.String (CString)
-import Data.ByteString
+import qualified Data.ByteString as BS
 import Data.ByteString.Internal
-
+import Data.ByteString.Unsafe (unsafeUseAsCString)
+ 
 -----------------------
 -- Windows API calls --
 -----------------------
@@ -36,9 +39,12 @@ type HHOOK = Word64
 -- imports from ScintillaProxy.dll
 foreign import ccall safe "ScnNewEditor"     c_ScnNewEditor :: HWND -> IO (HWND)      
 foreign import ccall safe "ScnDestroyEditor" c_ScnDestroyEditor :: HWND -> IO ()      
-foreign import ccall safe "ScnSendEditor"    c_ScnSendEditor :: HWND -> Word32 -> WPARAM -> LPARAM -> IO (LRESULT)
 foreign import ccall safe "ScnEnableEvents"  c_ScnEnableEvents :: HWND -> FunPtr (Ptr (SCNotification) -> IO ()) -> IO (Int32)
 foreign import ccall safe "ScnDisableEvents" c_ScnDisableEvents :: HWND -> IO ()      
+
+-- direct call to Scintilla, different aliases simplify conversion to WPARAM and LPARAM types 
+foreign import ccall safe "ScnSendEditor"    c_ScnSendEditorII :: HWND -> Word32 -> Word64 -> Int64 -> IO (Int64)
+foreign import ccall safe "ScnSendEditor"    c_ScnSendEditorIS :: HWND -> Word32 -> Word64 -> CString -> IO (Int64)
 
 -- callback wrapper
 foreign import ccall safe "wrapper" createCallback ::
@@ -231,12 +237,18 @@ scnNotifyGetListCompletionMethod (SCNotification _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 ------------------------------------------------------------    
 
 scnSetText :: ScnEditor -> ByteString -> IO ()
-scnSetText e s = do
-    let (fp, _, _) = toForeignPtr s
-    add <- withForeignPtr fp (\p -> return (minusPtr p nullPtr)) 
-    c_ScnSendEditor (scnGetHwnd e) 2181 0 (fromIntegral add :: Int32)
+scnSetText e bs = do
+    unsafeUseAsCString bs (\cs -> do c_ScnSendEditorIS (scnGetHwnd e) 2181 0 cs)
     return ()
 
-
-    --peekCString
+scnGetAllText :: ScnEditor -> IO (ByteString)
+scnGetAllText e = do
+    let h = scnGetHwnd e                -- scintilla editor hwnd
+    len <- c_ScnSendEditorII h 2006 0 0 -- get length
+    let bs = (BS.replicate (fromIntegral (len+1) :: Int) 0)   -- allocate buffer including terminating null
+    unsafeUseAsCString bs (\cs -> do c_ScnSendEditorIS h 2182 (fromIntegral (len+1) :: Word64) cs) -- get text
+    return (bs)
+    
+scnGetTextLen :: ScnEditor -> IO (Int64)
+scnGetTextLen e = c_ScnSendEditorII (scnGetHwnd e) 2006 0 0
 

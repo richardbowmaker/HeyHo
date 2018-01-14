@@ -3,7 +3,7 @@ module Main where
 import Graphics.UI.WX
 import Graphics.UI.WXCore
 import Scintilla
-import qualified Data.ByteString.Char8 as BS (pack, readFile, ByteString)
+import qualified Data.ByteString.Char8 as BS (pack, readFile, writeFile, ByteString)
 
 main = start mainGUI
 
@@ -44,7 +44,7 @@ setupMenus f scn = do
                                              
     menuFileSave    <- menuItem menuFile    [text := "Save\tCtrl-S", help := "Saves a file"]
     menuFileSaveAs  <- menuItem menuFile    [text := "Save As ...\tCtrl-Shift-S", help := "Saves a file"]
---    set menuFileSaveAs [on command := fileSaveAs menuFileSaveAs f]
+    set menuFileSaveAs [on command := fileSaveAs f scn]
                                              
     menuAppendSeparator menuFile
                              
@@ -137,12 +137,29 @@ scnCallback _ = return ()
 fileOpen :: Frame () -> ScnEditor -> IO ()
 fileOpen f scn = do                                       -- wxFD_OPEN wxFD_FILE_MUST_EXIST
     fd <- fileDialogCreate f "Open file" "." "" "*.hs" (Point 100 100) 0x11
-    dialogShowModal fd
-    fn <- fileDialogGetPath fd
-    bs <- BS.readFile fn
-    scnSetText scn bs
-    return ()
+    rs <- dialogShowModal fd
+    if rs == wxID_OK
+    then do    
+        fn <- fileDialogGetPath fd
+        bs <- BS.readFile fn
+        scnSetText scn bs
+        return ()
+    else
+        return ()
    
+fileSaveAs :: Frame () -> ScnEditor -> IO ()
+fileSaveAs f scn = do                                       -- wxFD_SAVE wxFD_OVERWRITE_PROMPT
+    fd <- fileDialogCreate f "Save file as" "." "" "*.hs" (Point 100 100) 0x6
+    rs <- dialogShowModal fd    
+    if rs == wxID_OK
+    then do    
+        fn <- fileDialogGetPath fd
+        bs <- scnGetAllText scn
+        BS.writeFile fn bs
+        return ()
+    else 
+        return ()
+ 
 ------------------------------------------------------------    
 -- Notebook
 ------------------------------------------------------------    
@@ -158,6 +175,7 @@ createNoteBook f = do
     ta <- auiSimpleTabArtCreate
     auiNotebookSetArtProvider nb ta
     return (nb)
+    
 ------------------------------------------------------------    
 -- Tree Control
 ------------------------------------------------------------    
