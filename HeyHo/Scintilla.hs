@@ -235,7 +235,6 @@ scnSetText e s = do
     let (fp, _, _) = toForeignPtr s
     add <- withForeignPtr fp (\p -> return (minusPtr p nullPtr)) 
     c_ScnSendEditor (scnGetHwnd e) 2181 0 (fromIntegral add :: Int32)
---    c_ScnSendEditor (scnGetHwnd e) 2181 0 0
     return ()
 
 

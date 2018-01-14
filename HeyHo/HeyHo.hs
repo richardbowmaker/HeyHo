@@ -3,7 +3,7 @@ module Main where
 import Graphics.UI.WX
 import Graphics.UI.WXCore
 import Scintilla
-import Data.ByteString.Char8 (pack)
+import qualified Data.ByteString.Char8 as BS (pack, readFile, ByteString)
 
 main = start mainGUI
 
@@ -12,73 +12,114 @@ mainGUI = do
 
     f <- frame [] 
     
-    set f [ text := "Aui Test", 
-            size := (Size 500 500)]
-                       
-    auiMgr <- auiManagerCreate f wxAUI_MGR_DEFAULT
+    set f [ text := "HeyHo", size := (Size 1300 800)]
+   
+    -- AUI manager and child windows
+    (am, scn) <- setUpMainWindow f
+  
+    -- menus
+    menus <- setupMenus f scn
+
+     -- create statusbar field
+    statusBar' <- statusField   [text := "Welcome to wxHaskell"]
+
+    -- set the statusbar and menubar
+    set f [ statusBar := [statusBar'], menuBar := menus]
+
+    set f [on closing := onClosing f am scn]
+        
+    return ()
+   
+------------------------------------------------------------    
+-- Setup menus
+------------------------------------------------------------    
+
+setupMenus :: Frame () -> ScnEditor -> IO ([Menu()])
+setupMenus f scn = do
+
+    -- file menu  
+    menuFile        <- menuPane             [text := "&File"]
+    menuFileOpen    <- menuItem menuFile    [text := "Open ...\tCtrl-O", help := "Opens a file"]
+    set menuFileOpen [on command := fileOpen f scn]
+                                             
+    menuFileSave    <- menuItem menuFile    [text := "Save\tCtrl-S", help := "Saves a file"]
+    menuFileSaveAs  <- menuItem menuFile    [text := "Save As ...\tCtrl-Shift-S", help := "Saves a file"]
+--    set menuFileSaveAs [on command := fileSaveAs menuFileSaveAs f]
+                                             
+    menuAppendSeparator menuFile
+                             
+    menuQuit  <- menuQuit menuFile [help := "Quit the demo", on command := close f]
+
+    menuEdit         <- menuPane            [text := "&Edit"]
+    menuEditUndo     <- menuItem menuEdit   [text := "Undo\tCtrl-Z"]
+    
+    menuBuild        <- menuPane            [text := "Build"]
+    menuBuildCompile <- menuItem menuBuild  [text := "Compile\tCtrl-F7",       help := "Compiles current source file"]
+    menuBuildBuild   <- menuItem menuBuild  [text := "Build\tF7",              help := "Build the project"]
+    menuBuildReBuild <- menuItem menuBuild  [text := "Rebuild\tCtrl-Alt-F7",   help := "Rebuild the project"]
+    menuBuildClean   <- menuItem menuBuild  [text := "Clean",                  help := "Clean the project"]
+          
+    -- create Help menu
+    menuHelp'        <- menuHelp []
+    menuHelpAbout    <- menuAbout menuHelp' [help := "About HeyHo", on command := infoDialog f "About HeyHo" "mmmmm !"]
+    
+    return ([menuFile, menuEdit, menuBuild, menuHelp'])
+
+------------------------------------------------------------    
+-- Setup AUI manager and its child windows
+------------------------------------------------------------    
+   
+setUpMainWindow :: Frame () -> IO (AuiManager (), ScnEditor)    
+setUpMainWindow f = do 
+
+    am <- auiManagerCreate f wxAUI_MGR_DEFAULT
       
     -- add dockable tree
-    tree <- createTree f   
+    tree <- createTree f
     api <- auiPaneInfoCreateDefault
     auiPaneInfoCaption api "Tree Control"
     auiPaneInfoLeft api
-    auiPaneInfoLayer api 1
-    auiPaneInfoPosition api 1
     auiPaneInfoCloseButton api True
-    auiPaneInfoMaximizeButton api True
     
-    auiManagerAddPaneByPaneInfo auiMgr tree api
+    auiManagerAddPaneByPaneInfo am tree api
     
     -- add dockable grid
     grid <- createGrid f
     api <- auiPaneInfoCreateDefault
     auiPaneInfoCaption api "Grid Control"
     auiPaneInfoBottom api
-    auiPaneInfoLayer api 1
-    auiPaneInfoPosition api 1
     auiPaneInfoCloseButton api True
-    auiPaneInfoMaximizeButton api True
     
-    auiManagerAddPaneByPaneInfo auiMgr grid api
+    auiManagerAddPaneByPaneInfo am grid api
     
     -- add scintilla editor
-    p <- panel f []
-    hwnd <- windowGetHandle p
+    p1 <- panel f []
+    hwnd <- windowGetHandle p1
     scn <- scnCreateEditor hwnd
     scnEnableEvents scn scnCallback
     
     api <- auiPaneInfoCreateDefault
     auiPaneInfoCaption api "Scintilla"
     auiPaneInfoCentre api
-    auiPaneInfoLayer api 1
-    auiPaneInfoPosition api 1
     auiPaneInfoCloseButton api True
     auiPaneInfoMaximizeButton api True
 
-    auiManagerAddPaneByPaneInfo auiMgr p api
+    auiManagerAddPaneByPaneInfo am p1 api
+   
+    -- add output pane
+    nb <- createNoteBook f
     
-             
-    
-    menuFileOpen <- menuCreate "Open" 0 
-    menuFileClose <- menuCreate "Close" 0 
-    
-    mbar <- menuBarCreate 0
-    menuBarAppend mbar menuFileOpen "&File"
-    menuBarAppend mbar menuFileClose "&File"
-    
-    frameSetMenuBar f mbar
- 
-    auiManagerUpdate auiMgr
+    api <- auiPaneInfoCreateDefault
+    auiPaneInfoCaption api "Output"
+    auiPaneInfoBottom api
+    auiPaneInfoCloseButton api True
 
-    let bs = pack "hello world!"
-    scnSetText scn bs
+    auiManagerAddPaneByPaneInfo am nb api
 
-    
-    set f [on closing := onClosing f auiMgr scn]
-    
-     
-    return ()
+    auiManagerUpdate am
 
+    return (am, scn)
+    
 ------------------------------------------------------------    
 -- Event handlers
 ------------------------------------------------------------    
@@ -92,14 +133,36 @@ onClosing f aui scn = do
 
 scnCallback :: SCNotification -> IO ()
 scnCallback _ = return ()
-    
+
+fileOpen :: Frame () -> ScnEditor -> IO ()
+fileOpen f scn = do                                       -- wxFD_OPEN wxFD_FILE_MUST_EXIST
+    fd <- fileDialogCreate f "Open file" "." "" "*.hs" (Point 100 100) 0x11
+    dialogShowModal fd
+    fn <- fileDialogGetPath fd
+    bs <- BS.readFile fn
+    scnSetText scn bs
+    return ()
+   
+------------------------------------------------------------    
+-- Notebook
+------------------------------------------------------------    
+
+createNoteBook :: Frame () -> IO (Notebook ())
+createNoteBook f = do
+    nb <- notebookCreate f idAny rectNull ( wxCLIP_CHILDREN + wxAUI_NB_BOTTOM)
+    set nb [] 
+    p <- panel nb []
+    hwnd <- windowGetHandle p
+    scn <- scnCreateEditor hwnd
+    notebookAddPage nb p "Example" False 0        
+    return (nb)
 ------------------------------------------------------------    
 -- Tree Control
 ------------------------------------------------------------    
     
 createTree :: Frame () ->  IO (TreeCtrl ())
 createTree f = do      
-    tree <- treeCtrl f []
+    tree <- treeCtrl f [size := (Size 100 100)] 
     root <- treeCtrlAddRoot tree "root" (-1) (-1) objectNull     
     _    <- treeCtrlAppendItem tree root "item1" (-1) (-1) objectNull
     _    <- treeCtrlAppendItem tree root "item2" (-1) (-1) objectNull
