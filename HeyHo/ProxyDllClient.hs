@@ -40,6 +40,3 @@ cmdTest :: IO ()
 cmdTest = do
     marshallTypes "string" 12 45.67
     return ()
-    
-       
-    

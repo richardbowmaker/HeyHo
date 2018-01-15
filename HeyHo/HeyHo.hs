@@ -96,6 +96,7 @@ setUpMainWindow f = do
     p1 <- panel f []
     hwnd <- windowGetHandle p1
     scn <- scnCreateEditor hwnd
+    scnConfigureHaskell scn
     scnEnableEvents scn scnCallback
     
     api <- auiPaneInfoCreateDefault

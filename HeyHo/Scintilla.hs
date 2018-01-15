@@ -1,3 +1,4 @@
+
 module Scintilla
 (   SCNotification,
     ScnEditor,
@@ -12,23 +13,28 @@ module Scintilla
     scnSetText,
     scnGetAllText,
     scnGetTextLen,
+    scnConfigureHaskell
 ) where 
     
 import Control.Applicative ((<$>), (<*>))
-import Foreign.Storable
-import Data.Word
-import Data.Int
 
-import System.Win32.Types
-import Graphics.Win32.GDI.Types
-
-import Graphics.UI.WXCore
-import Foreign.Ptr
-import Foreign.ForeignPtr
-import Foreign.C.String (CString)
-import qualified Data.ByteString as BS
-import Data.ByteString.Internal
+import Data.Word (Word32, Word64)
+import Data.Int (Int32, Int64)
+import qualified Data.ByteString as BS (replicate)
+import Data.ByteString.Internal (ByteString)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
+import Data.String.Combinators (punctuate)
+import Data.Strings (strNull)
+
+import Graphics.Win32.GDI.Types (COLORREF, HWND, rgb)
+import Graphics.UI.WXCore (varCreate, varGet)
+
+import Foreign.Ptr (FunPtr, Ptr)
+import Foreign.C.String (CString, withCString)
+import Foreign.Storable (Storable, alignment, sizeOf, peek, poke, pokeByteOff, peekByteOff)
+
+
+import ScintillaConstants
  
 -----------------------
 -- Windows API calls --
@@ -236,19 +242,65 @@ scnNotifyGetListCompletionMethod (SCNotification _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 -- Scintilla commands
 ------------------------------------------------------------    
 
+-- configure editor for haskell
+scnConfigureHaskell :: ScnEditor -> IO ()
+scnConfigureHaskell e = do
+    scnSetLexer e (fromIntegral sCLEX_HASKELL :: Int)
+    scnSetKeywords e 0 ["do", "if", "then", "else", "case"]
+    scnSetAStyle e sCE_H_DEFAULT (rgb 0 255 0) (rgb 0 0 0) 10 "Courier New"
+    scnStyleClearAll e
+    return ()
+    
+-- set the entire content of the editor    
 scnSetText :: ScnEditor -> ByteString -> IO ()
 scnSetText e bs = do
-    unsafeUseAsCString bs (\cs -> do c_ScnSendEditorIS (scnGetHwnd e) 2181 0 cs)
+    unsafeUseAsCString bs (\cs -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_SETTEXT 0 cs)
     return ()
 
+-- get all text from editor    
 scnGetAllText :: ScnEditor -> IO (ByteString)
-scnGetAllText e = do
-    let h = scnGetHwnd e                -- scintilla editor hwnd
-    len <- c_ScnSendEditorII h 2006 0 0 -- get length
-    let bs = (BS.replicate (fromIntegral (len+1) :: Int) 0)   -- allocate buffer including terminating null
-    unsafeUseAsCString bs (\cs -> do c_ScnSendEditorIS h 2182 (fromIntegral (len+1) :: Word64) cs) -- get text
+scnGetAllText e = do            
+    len <- scnGetTextLen e
+    let bs = (BS.replicate len 0)   -- allocate buffer
+    unsafeUseAsCString bs (\cs -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_GETTEXT (fromIntegral len :: Word64) cs)
     return (bs)
     
-scnGetTextLen :: ScnEditor -> IO (Int64)
-scnGetTextLen e = c_ScnSendEditorII (scnGetHwnd e) 2006 0 0
+scnGetTextLen :: ScnEditor -> IO (Int)
+scnGetTextLen e = do
+    len <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETLENGTH 0 0
+    return (fromIntegral len :: Int)
 
+scnSetLexer :: ScnEditor -> Int -> IO ()
+scnSetLexer e s = do               
+    c_ScnSendEditorII (scnGetHwnd e) sCI_SETLEXER (fromIntegral s :: Word64) 0
+    return ()
+
+scnSetKeywords :: ScnEditor -> Int -> [String] -> IO ()
+scnSetKeywords e set ks = do
+    withCString 
+        (concat $ punctuate " " ks) 
+        (\cs -> c_ScnSendEditorIS (scnGetHwnd e) sCI_SETKEYWORDS 0 cs)
+    return ()
+
+scnSetAStyle :: ScnEditor -> Word64 -> COLORREF -> COLORREF -> Int -> String -> IO ()
+scnSetAStyle e st fc bc sz fnt = do
+    let h = scnGetHwnd e
+
+    c_ScnSendEditorII h sCI_STYLESETFORE st (fromIntegral fc :: Int64)
+    c_ScnSendEditorII h sCI_STYLESETBACK st (fromIntegral bc :: Int64)
+  
+    if sz >= 1 
+        then c_ScnSendEditorII h sCI_STYLESETSIZE st (fromIntegral sz :: Int64)
+        else return (0)
+    
+    if not $ strNull fnt
+        then withCString fnt (\cs -> c_ScnSendEditorIS h sCI_STYLESETFONT st cs)
+        else return (0)
+    return ()
+
+scnStyleClearAll :: ScnEditor -> IO ()
+scnStyleClearAll e = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_STYLECLEARALL 0 0
+    return ()
+    
+    
