@@ -242,13 +242,37 @@ scnNotifyGetListCompletionMethod (SCNotification _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 -- Scintilla commands
 ------------------------------------------------------------    
 
--- configure editor for haskell
+scnBlack :: COLORREF
+scnBlack = (rgb 0 0 0)
+
+scnWhite :: COLORREF
+scnWhite = (rgb 0xff 0xff 0xff)
+
+scnDarkGreen :: COLORREF
+scnDarkGreen = (rgb 0 0x80 0)
+
+scnKeyBlue :: COLORREF
+scnKeyBlue = (rgb 0x20 0x50 0xf0)
+
+scnStringBrown :: COLORREF
+scnStringBrown = (rgb 0xA0 0x10 0x20)
+
+-- configure lexer for haskell
 scnConfigureHaskell :: ScnEditor -> IO ()
 scnConfigureHaskell e = do
     scnSetLexer e (fromIntegral sCLEX_HASKELL :: Int)
-    scnSetKeywords e 0 ["do", "if", "then", "else", "case"]
-    scnSetAStyle e sCE_H_DEFAULT (rgb 0 255 0) (rgb 0 0 0) 10 "Courier New"
+    scnSetKeywords e 0 ["do", "if", "then", "else", "case", "qualified", "return", "case", 
+                        "ccall", "safe", "unsafe", "import", "data", "deriving"]
+    scnSetAStyle e (fromIntegral sTYLE_DEFAULT :: Word64) scnBlack scnWhite 9 "Courier New"
     scnStyleClearAll e
+    scnSetAStyle e (fromIntegral sCE_H_DEFAULT :: Word64) scnBlack scnWhite 9 "Courier New"
+    scnSetStyleColour e sCE_HA_KEYWORD       scnKeyBlue     scnWhite
+    scnSetStyleColour e sCE_HA_STRING        scnStringBrown scnWhite
+    scnSetStyleColour e sCE_HA_IMPORT        scnKeyBlue     scnWhite
+    scnSetStyleColour e sCE_HA_COMMENTLINE   scnDarkGreen   scnWhite
+    scnSetStyleColour e sCE_HA_COMMENTBLOCK  scnDarkGreen   scnWhite    
+    scnSetStyleColour e sCE_HA_COMMENTBLOCK2 scnDarkGreen   scnWhite
+    scnSetStyleColour e sCE_HA_COMMENTBLOCK3 scnDarkGreen   scnWhite
     return ()
     
 -- set the entire content of the editor    
@@ -285,17 +309,17 @@ scnSetKeywords e set ks = do
 scnSetAStyle :: ScnEditor -> Word64 -> COLORREF -> COLORREF -> Int -> String -> IO ()
 scnSetAStyle e st fc bc sz fnt = do
     let h = scnGetHwnd e
-
     c_ScnSendEditorII h sCI_STYLESETFORE st (fromIntegral fc :: Int64)
     c_ScnSendEditorII h sCI_STYLESETBACK st (fromIntegral bc :: Int64)
-  
-    if sz >= 1 
-        then c_ScnSendEditorII h sCI_STYLESETSIZE st (fromIntegral sz :: Int64)
-        else return (0)
+    c_ScnSendEditorII h sCI_STYLESETSIZE st (fromIntegral sz :: Int64)
+    withCString fnt (\cs -> c_ScnSendEditorIS h sCI_STYLESETFONT st cs)
+    return ()
     
-    if not $ strNull fnt
-        then withCString fnt (\cs -> c_ScnSendEditorIS h sCI_STYLESETFONT st cs)
-        else return (0)
+scnSetStyleColour :: ScnEditor -> Word64 -> COLORREF -> COLORREF -> IO ()
+scnSetStyleColour e st fc bc = do
+    let h = scnGetHwnd e
+    c_ScnSendEditorII h sCI_STYLESETFORE st (fromIntegral fc :: Int64)
+    c_ScnSendEditorII h sCI_STYLESETBACK st (fromIntegral bc :: Int64)
     return ()
 
 scnStyleClearAll :: ScnEditor -> IO ()
