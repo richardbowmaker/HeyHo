@@ -12,7 +12,7 @@ data SourceFile = SourceFile {  edPanel     :: Panel (),        -- The panel add
                                 filePath    :: Maybe String,    -- Source file path, Nothing = file name not set yet
                                 isClean     :: Bool }           -- False = file needs saving
                                                         
-data Session = Session {    mainFrame   :: Frame                -- Main window
+data Session = Session {    mainFrame   :: Frame (),             -- Main window
                             auiMgr      :: AuiManager (),       -- Application level AUI manager
                             editorNB    :: AuiNotebook (),      -- Notebook of source file editors
                             openFiles   :: [SourceFile] }       -- List of open source files
@@ -186,14 +186,14 @@ scnCallback :: SCNotification -> IO ()
 scnCallback _ = return ()
 
 -- File Open
-onFileOpen :: Session -> IO ()
+onFileOpen :: Session -> IO (Session)
 onFileOpen ss@(Session f _ _ _) = do             -- wxFD_OPEN wxFD_FILE_MUST_EXIST
     fd <- fileDialogCreate f "Open file" "." "" "*.hs" (Point 100 100) 0x11
     ans <- dialogShowModal fd
     if ans == wxID_OK
     then do
         fn <- fileDialogGetPath fd
-        fileOpen scn fn 
+        fileOpen ss fn 
     else
         return ()
 
