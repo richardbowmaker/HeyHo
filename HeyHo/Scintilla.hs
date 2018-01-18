@@ -29,13 +29,18 @@ import Data.Strings (strNull)
 import Graphics.Win32.GDI.Types (COLORREF, HWND, rgb)
 import Graphics.UI.WXCore (varCreate, varGet)
 
-import Foreign.Ptr (FunPtr, Ptr)
+import Foreign.Ptr (FunPtr, Ptr, minusPtr, nullPtr)
 import Foreign.C.String (CString, withCString)
 import Foreign.Storable (Storable, alignment, sizeOf, peek, poke, pokeByteOff, peekByteOff)
 
+import Numeric (showHex)
 
+-- project imports
 import ScintillaConstants
+import Misc
  
+ 
+
 -----------------------
 -- Windows API calls --
 -----------------------
@@ -192,6 +197,17 @@ data ScnEditor = ScnEditor
     }  
  
 -----------------------------------------------------------
+-- show
+
+instance Show ScnEditor where
+    show (ScnEditor p e me) = 
+        "{ScnEditor} Parent HWND: " ++ (ptrToString p) ++ 
+        ", Editor HWND: " ++ (ptrToString e) ++ 
+        ", Event Handler: " ++ (case me of 
+                                    Nothing -> "Not set" 
+                                    (Just _) -> "Set" )
+
+-----------------------------------------------------------
 
 -- Create the Scintilla editor window
 -- parent = HWND of parent window
@@ -210,6 +226,7 @@ scnEnableEvents (ScnEditor p c _) f = do
     return (s)
 
 scnDisableEvents :: ScnEditor -> IO (ScnEditor)
+scnDisableEvents s@(ScnEditor _ _ Nothing) = return (s)
 scnDisableEvents (ScnEditor p c _) = do
     let s = (ScnEditor p c Nothing)
     c_ScnDisableEvents c    

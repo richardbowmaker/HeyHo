@@ -52,11 +52,12 @@ instance Show Session where
     show (Session mf am nb []) = "{Session} Main: ??, AuiMgr: ??, Notebook ??, No files"
     show (Session mf am nb fs) = "{Session} Main: ??, AuiMgr: ??, Notebook ??\n    " ++ (concat $ punctuate "\n    " $ map show fs) ++ "\n"
     
- 
-fs = [(SourceFile (Panel' ()) (ScnEditor (HWND 0) (HWND 0) Nothing) Nothing True)]
+
+sf = (SourceFile (Panel' ()) (ScnEditor (HWND 0) (HWND 0) Nothing) Nothing True)    
+fs = [sf]
 ns = (Session (Frame' ()) (AuiManager' ()) (AuiNotebook' ()) fs)    
-    
- 
+  
+
  
 main = start mainGUI
 
@@ -65,58 +66,86 @@ mainGUI = do
   
     -- main window
     f <- frame []    
-    set f [ text := "Tryout", size := (Size 1300 800)]
     
     p <- panel f []
      
     mv <- newEmptyMVar
     
-    putMVar mv createSession
+    createSession mv f p
+    addSourceFile mv "some file 1.xxx"
+   
+    addSourceFile mv "some file 2.xxx"
+    addSourceFile mv "some file 1.xxx"
+    addSourceFile mv "some file 3.xxx"
+    addSourceFile mv "some file 2.xxx"
+    addSourceFile mv "some file 4.xxx"
+
+     
+    ss <- takeMVar mv
     
+    putStr (show ss ++ "\n")
     
-        
+    set f [ text := "Tryout", size := (Size 1300 800)]
+
     return ()
  
- 
-createSession :: Frame () -> Panel () -> Session
-createSession f p = (Session (Frame' ()) (AuiManager' ()) (AuiNotebook' ()) [(SourceFile (Panel' ()) scn Nothing True)])
+
+createSession :: MSession -> Frame () -> Panel () -> IO ()
+createSession mv f p = do
+    let ss = (Session (Frame' ()) (AuiManager' ()) (AuiNotebook' ()) [(SourceFile (Panel' ()) scn Nothing True)])
+    putMVar mv ss
+    return ()
     where scn = (ScnEditor (HWND 0) (HWND 0) Nothing)
 
-addSourceFile ::  Session -> String -> Session
-addSourceFile (Session f am nb fns) fp = (Session f am nb fns2)
+addSourceFile :: MSession -> String -> IO ()
+addSourceFile mv fp = do
+
+    ss@(Session mf am nb fns) <- takeMVar mv
+ 
+    case fns of 
+        -- assign file to initial editor window that is opened by the app
+        -- provided it is not dirty
+        [sf@(SourceFile _ _ Nothing True)] ->  do 
+        
+            -- set 1st slot
+            let ss = (Session mf am nb [sourceSetFileName sf fp])
+            putMVar mv ss
+            setSourceFileFocus mv fp
+            return ()          
+                                              
+        otherwise -> do 
+            if (isSourceFileInList fp fns) then do
+                
+                -- if already in file list then just switch focus
+                setSourceFileFocus mv fp
+                putMVar mv ss
+                return ()
+                
+             else do
+             
+                -- new file so add to list, create window and set focus
+                sf' <- openSourceFileEditor mv fp
+                let ss = (Session mf am nb (sf':fns))
+                putMVar mv ss
+                setSourceFileFocus mv fp                        
+                return ()
     
-    where    -- assign file to opening empty edit window, if not already used
-            (fns1, c) = findAndUpdate 
-                (\sf -> sourceFilePathIs sf Nothing) 
-                (\(SourceFile p s _ _) -> (SourceFile p s (Just fp) True)) 
-                fns
-
-            -- if file is not in the list add it
-            fns2 = case find (\sf -> sourceFilePathIs sf (Just fp)) fns1 of
-                Just _ -> fns1
-                Nothing -> (newSourceFile nb fp) : fns1 
-
+sourceSetFileName :: SourceFile -> String -> SourceFile
+sourceSetFileName (SourceFile p ed _ ic) fp = (SourceFile p ed (Just fp) ic)
+ 
+ 
+isSourceFileInList :: String -> [SourceFile] -> Bool
+isSourceFileInList fp fs = 
+    case find (\sf -> sourceFilePathIs sf (Just fp)) fs of
+        Just _ -> True
+        Nothing -> False
+ 
 sourceFilePathIs :: SourceFile -> Maybe String -> Bool
 sourceFilePathIs (SourceFile _ _ mfp1 _) mfp2 = fmap (map toLower) mfp1 == fmap (map toLower) mfp2
-                
-newSourceFile :: AuiNotebook' () -> String -> SourceFile
-newSourceFile nb fn = (SourceFile (Panel' ()) (ScnEditor (HWND 0) (HWND 0) Nothing) (Just fn) True)
-            
--- finds elements in a list using a predicate and updates them using a function
--- (a -> Bool)  = predicate
--- (a -> a)     = update function
--- [a]          = the list
--- ([a], Int)   = (updated list, no. of items updated)
-findAndUpdate :: (a -> Bool) -> (a -> a) -> [a] -> ([a], Int)
-findAndUpdate _ _ [] = ([], 0)
-findAndUpdate fp fu (x:xs) = 
-    if fp x then ((fu x):xs', c+1) else (x:xs', c) 
-    where (xs', c) = findAndUpdate fp fu xs  
 
-findAndReplace :: (a -> Bool) -> [a] -> a -> ([a], Int)
-findAndReplace fp xs x = findAndUpdate fp (\_ -> x) xs
+setSourceFileFocus :: MSession -> String -> IO ()
+setSourceFileFocus mv fp = return ()
 
-        
+openSourceFileEditor :: MSession -> String -> IO (SourceFile)
+openSourceFileEditor mv fp = return (SourceFile (Panel' ()) (ScnEditor (HWND 0) (HWND 0) Nothing) (Just fp) True) 
 
-
-    
