@@ -2,7 +2,8 @@
 module Main where
 import Graphics.UI.WX
 import Graphics.UI.WXCore
-import Scintilla
+import Graphics.UI.WX.Events
+
 
 main = start mainGUI
 
@@ -39,7 +40,7 @@ mainGUI = do
     auiPaneInfoMaximizeButton api True
     
     auiManagerAddPaneByPaneInfo auiMgr grid api
-    
+ {-   
     -- add scintilla editor
     p <- panel f []
     hwnd <- windowGetHandle p
@@ -55,8 +56,53 @@ mainGUI = do
     auiPaneInfoMaximizeButton api True
 
     auiManagerAddPaneByPaneInfo auiMgr p api
+ -}   
+ 
+    nb <- auiNotebookCreate f idAny (Point 0 0) (Size 0 0) (wxCLIP_CHILDREN + wxAUI_NB_TOP + wxAUI_NB_CLOSE_ON_ACTIVE_TAB)
+    set nb []
+
+
+    api <- auiPaneInfoCreateDefault
+    auiPaneInfoCaption api "Notebook"
+    auiPaneInfoCentre api
+    auiPaneInfoLayer api 1
+    auiPaneInfoPosition api 1
+    auiPaneInfoCloseButton api True
+    auiPaneInfoMaximizeButton api True
+
+    auiManagerAddPaneByPaneInfo auiMgr nb api
     
-             
+{-    
+    scn <- scnCreateEditor hwnd
+    scnConfigureHaskell scn
+    scnEnableEvents scn scnCallback 
+-}
+    -- create panel with scintilla editor inside
+
+    -- add page to notebook
+    p <- panel nb []
+    auiNotebookAddPage nb p "1" False 0
+    ta <- auiSimpleTabArtCreate
+    auiNotebookSetArtProvider nb ta
+    
+    p <- panel nb []
+    auiNotebookAddPage nb p "2" False 0
+    ta <- auiSimpleTabArtCreate
+    auiNotebookSetArtProvider nb ta
+    
+    p <- panel nb []
+    auiNotebookAddPage nb p "3" False 0
+    ta <- auiSimpleTabArtCreate
+    auiNotebookSetArtProvider nb ta
+    
+    p <- panel nb []
+    auiNotebookAddPage nb p "4" False 0
+    ta <- auiSimpleTabArtCreate
+    auiNotebookSetArtProvider nb ta
+    
+    set nb [ on auiNotebookOnPageCloseEvent := pageClose f]
+--    auiNotebookOnPageCloseEvent nb pageClose
+    
 --    menuFileOpen <- menuItemCreate
 --    menuItemSetItemLabel menuFileOpen "Open"
     
@@ -85,6 +131,12 @@ onClosing f aui = do
     windowDestroy f
     return ()
     
+pageClose :: Frame () -> EventAuiNotebook -> IO ()
+pageClose f ev@(AuiNotebookPageClose _ _) = do
+    auiManagerEventVeto ev True
+    set f [ text := "Page Closed" ]
+    return ()    
+
 ------------------------------------------------------------    
 -- Tree Control
 ------------------------------------------------------------    

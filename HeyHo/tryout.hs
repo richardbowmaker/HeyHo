@@ -116,7 +116,7 @@ addSourceFile mv fp = do
         otherwise -> do 
             if (isSourceFileInList fp fns) then do
                 
-                -- if already in file list then just switch focus
+                -- if already in file list then just switch focus to editor
                 setSourceFileFocus mv fp
                 putMVar mv ss
                 return ()
@@ -132,8 +132,7 @@ addSourceFile mv fp = do
     
 sourceSetFileName :: SourceFile -> String -> SourceFile
 sourceSetFileName (SourceFile p ed _ ic) fp = (SourceFile p ed (Just fp) ic)
- 
- 
+  
 isSourceFileInList :: String -> [SourceFile] -> Bool
 isSourceFileInList fp fs = 
     case find (\sf -> sourceFilePathIs sf (Just fp)) fs of
