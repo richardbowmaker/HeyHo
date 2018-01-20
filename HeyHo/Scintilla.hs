@@ -245,7 +245,7 @@ scnCallback (ScnEditor _ _ (Just f)) p = do
 scnGetHwnd :: ScnEditor -> HWND
 scnGetHwnd (ScnEditor _ h _) = h
 
-scnNotifyGetHwnd :: SCNotification -> HWND
+scnNotifyGetHwnd :: SCNotification -> Word64
 scnNotifyGetHwnd (SCNotification x _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _) = x           
 
 scnNotifyGetCode :: SCNotification -> Word32
@@ -261,7 +261,7 @@ scnNotifyGetListCompletionMethod :: SCNotification -> Int32
 scnNotifyGetListCompletionMethod (SCNotification _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ x) = x           
 
 scnCompareHwnd :: ScnEditor -> SCNotification -> Bool
-scnCompareHwnd scn sn = (scnGetHwnd scn) == (scnNotifyGetHwnd sn)
+scnCompareHwnd scn sn = ptrToWord64 (scnGetHwnd scn) == (scnNotifyGetHwnd sn)
 
 ------------------------------------------------------------    
 -- Scintilla commands

@@ -150,3 +150,25 @@ setSourceFileFocus mv fp = return ()
 openSourceFileEditor :: MSession -> String -> IO (SourceFile)
 openSourceFileEditor mv fp = return (SourceFile (Panel' ()) (ScnEditor (HWND 0) (HWND 0) Nothing) (Just fp) True) 
 
+findAndUpdate1 :: (a -> Bool) -> [a] -> a -> [a]
+findAndUpdate1 _ [] _ = []
+findAndUpdate1 f (x:xs) x' = (if f x then x' else x) : findAndUpdate1 f xs x'
+
+findAndUpdate2 :: (a -> Maybe a) -> [a] -> [a]
+findAndUpdate2 _ [] = []
+findAndUpdate2 f (x:xs) = 
+    (case f x of
+        Just x' -> x' 
+        Nothing -> x) : findAndUpdate2 f xs
+        
+ifFoundThenIO :: (a -> Bool) -> [a] -> (IO ()) -> IO ()
+ifFoundThenIO _ [] _ =  return ()
+ifFoundThenIO p (x:xs) io = do if p x then io else ifFoundThenIO p xs io
+
+ifFoundThenElseIO :: (a -> Bool) -> [a] -> (IO ()) -> (IO ()) -> IO ()
+ifFoundThenElseIO _ [] _ io2 =  io2
+ifFoundThenElseIO p (x:xs) io1 io2 = do if p x then io1 else ifFoundThenElseIO p xs io1 io2
+
+
+
+  

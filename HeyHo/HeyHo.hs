@@ -223,34 +223,69 @@ onClosing (Session mf am nb pr _) = do
     return ()
 
 scnCallback :: Session -> SCNotification -> IO ()
-scnCallback ss@(Session _ _ _ mpr (Menus _ mfs _ mfsa)) sn = do 
+scnCallback ss sn = do 
 
-    -- get the source file
-    pr@(Project fs) <- takeMVar mpr
-    putMVar mpr pr
+    case (scnNotifyGetCode sn) of
     
-    -- find source file from hwnd
-    let msf = find (\(SourceFile _ scn _ _) -> scnCompareHwnd scn sn) fs
+    -- If the constants are used rather than the real values the compiler
+    -- gives some nonsense about overlapping cases !! compiler bug
     
-    case msf of
-    
-        Just sf ->
-        
-            case (scnNotifyGetCode sn) of
+        2002 -> do -- sCN_SAVEPOINTREACHED
+            updateFileCleanStatus ss sn True
+            updateSaveMenus ss
+            return ()
+
+        2003 -> do -- sCN_SAVEPOINTLEFT
+            updateFileCleanStatus ss sn False
+            updateSaveMenus ss
+            return ()
+          
+        otherwise -> return ()
+          
+updateFileCleanStatus :: Session -> SCNotification -> Bool -> IO ()
+updateFileCleanStatus ss@(Session _ _ _ mpr _) sn ic' = do 
+
+    -- update the source file clean flag
+    (Project fs) <- takeMVar mpr   
+    let fs' = findAndUpdate2 (\(SourceFile p e fp ic) -> 
+                    if (scnCompareHwnd e sn) then (Just (SourceFile p e fp ic'))
+                    else Nothing ) fs       
+    putMVar mpr (Project fs') 
+    return ()
+
+updateSaveMenus :: Session -> IO ()   
+updateSaveMenus (Session _ _ nb mpr (Menus _ mS mSAs mSAll)) = do
+
+    pr@(Project fs) <- takeMVar mpr   
+    putMVar mpr pr 
+
+    -- enable save all menu if any files are dirty
+    if (any (\(SourceFile _ _ _ ic) -> not ic) fs) then
+        set mSAll [enabled := True]
+    else
+        set mSAll [enabled := False]
             
-                sCN_SAVEPOINTLEFT -> do 
-                    set mfs  [enabled := True]
-                    set mfsa [enabled := True]
-                    return ()
-                 
-                sCN_SAVEPOINTREACHED -> do
-                    set mfs  [enabled := False]
-                    set mfsa [enabled := False]
-                    return ()
-                 
-                otherwise -> return ()
-                
-        Nothing -> return ()
+    -- get hwnd of the panel associated with the selected notebook tab
+    ix <- auiNotebookGetSelection nb
+    p <- auiNotebookGetPage nb ix
+    hp <- windowGetHandle p
+    
+    hs <- mapM (\(SourceFile p' _ _ ic) -> 
+                    do 
+                    hp' <- windowGetHandle p' 
+                    return (hp',ic)) fs
+
+    -- set file save enabled if the current tab selection is for a dirty file
+    case find (\(hp',ic) -> (comparePtrs hp hp') && not ic) hs of
+        Just _  -> set mS [enabled := True]
+        Nothing -> set mS [enabled := False]
+    
+    -- enable save as if there are any tabs
+    pc <- auiNotebookGetPageCount nb
+    if pc == 0 then 
+        set mSAs [enabled := False]
+    else
+        set mSAs [enabled := True]
 
 -- File Open
 onFileOpen :: Session -> IO ()
@@ -261,7 +296,7 @@ onFileOpen ss@(Session mf _ _ pr _) = do
     if ans == wxID_OK
     then do
         fp <- fileDialogGetPath fd
-        withProject (fileOpen ss fp) pr
+        fileOpen ss fp
         return ()
     else
         return ()
@@ -287,9 +322,12 @@ onFileSaveAs ss@(Session mf _ _ _ _) = do
 sessionGetMainFrame :: Session -> Frame ()
 sessionGetMainFrame (Session mf _ _ _ _) = mf
 
-fileOpen :: Session -> String -> Project -> IO (Project)
-fileOpen ss@(Session _ _ nb _ _) fp pr@(Project fs) = do
+fileOpen :: Session -> String -> IO ()
+fileOpen ss@(Session _ _ nb mpr _) fp = do
 
+    (Project fs) <- takeMVar mpr
+    putMVar mpr (Project fs)
+    
     case fs of 
         -- assign file to initial editor window that is opened by the app
         -- provided it is not dirty
@@ -298,23 +336,27 @@ fileOpen ss@(Session _ _ nb _ _) fp pr@(Project fs) = do
             -- set 1st slot
             let sf' = sourceSetFileName sf fp
             writeSourceFileEditor sf'
-            auiNotebookSetPageText nb 0 (takeFileName fp) 
-            return (Project [sf'])          
+            auiNotebookSetPageText nb 0 (takeFileName fp)
+            (Project fs) <- takeMVar mpr
+            putMVar mpr (Project [sf'])
+            return ()          
                                               
         otherwise -> do
         
             if (isSourceFileInList fp fs) then do
                 
                 -- if already in file list then just switch focus to editor
+                pr <- takeMVar mpr
+                putMVar mpr pr
                 setSourceFileFocus nb pr fp
-                return (Project fs)
+                return ()
                 
              else do
              
                 -- new file so add to list, create window and set focus
                 sf' <- openSourceFileEditor ss fp
                 writeSourceFileEditor sf'
-                return (Project (sf':fs))
+                return ()          
     
 sourceSetFileName :: SourceFile -> String -> SourceFile
 sourceSetFileName (SourceFile p ed _ ic) fp = (SourceFile p ed (Just fp) ic)
@@ -344,10 +386,11 @@ writeSourceFileEditor :: SourceFile -> IO ()
 writeSourceFileEditor (SourceFile _ e (Just fp) _) = do
     text <- BS.readFile fp
     scnSetText e text
+    scnSetSavePoint e
     return ()
 
 openSourceFileEditor :: Session -> String -> IO (SourceFile)
-openSourceFileEditor ss@(Session _ _ nb _ _) fp = do
+openSourceFileEditor ss@(Session _ _ nb mpr _) fp = do
 
     -- create panel with scintilla editor inside
     p <- panel nb []
@@ -363,15 +406,15 @@ openSourceFileEditor ss@(Session _ _ nb _ _) fp = do
     
     -- set focus to new page
     ix <- auiNotebookGetPageIndex nb p
-    auiNotebookSetSelection nb ix   
-    
-    -- document clean
-    scnSetSavePoint scn'
-    
-    -- source file info
+    auiNotebookSetSelection nb ix  
+  
+    -- add source file to project
     let sf = (SourceFile p scn' (Just fp) True)
-    
-    return (sf)        
+    (Project fs) <- takeMVar mpr
+    putMVar mpr (Project (sf:fs))
+          
+    return (sf) 
+  
 {-
 fileSave :: ScnEditor -> String -> IO ()
 fileSave scn fn = do

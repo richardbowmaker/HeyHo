@@ -4,16 +4,25 @@ module Misc
     ptrToString,
     frameToString,
     windowToString,
-    panelToString
+    panelToString,
+    ptrToWord64,
+    findAndUpdate1,
+    findAndUpdate2,
+    comparePtrs
 ) where
 
 import Foreign.Ptr (FunPtr, Ptr, minusPtr, nullPtr)
 import Numeric (showHex)
 import Graphics.UI.WXCore
+import Data.Word (Word64)
+
 
 ptrToString :: Ptr a -> String
 ptrToString p = "0x0" ++ (showHex (minusPtr p nullPtr) "")
               
+ptrToWord64 :: Ptr a -> Word64
+ptrToWord64 p = fromIntegral  (minusPtr p nullPtr) :: Word64
+
 panelToString :: Panel () -> IO String
 panelToString p = do
     h <- windowGetHandle p
@@ -30,3 +39,17 @@ windowToString w = do
     h <- windowGetHandle w
     return ("Window HWND: " ++ (showHex (minusPtr h nullPtr) ""))
     
+findAndUpdate1 :: (a -> Bool) -> [a] -> a -> [a]
+findAndUpdate1 _ [] _ = []
+findAndUpdate1 f (x:xs) x' = (if f x then x' else x) : findAndUpdate1 f xs x'
+
+findAndUpdate2 :: (a -> Maybe a) -> [a] -> [a]
+findAndUpdate2 _ [] = []
+findAndUpdate2 f (x:xs) = 
+    (case f x of
+        Just x' -> x' 
+        Nothing -> x) : findAndUpdate2 f xs
+     
+
+comparePtrs :: Ptr a -> Ptr a -> Bool
+comparePtrs p1 p2 = (ptrToWord64 p1) == (ptrToWord64 p2)
