@@ -15,6 +15,7 @@ import System.FilePath.Windows (takeFileName)
 
 -- project imports
 import Scintilla
+import ScintillaConstants
 import Misc
 
       
@@ -30,41 +31,42 @@ mainGUI = do
     -- AUI manager and child windows
     ss <- setUpMainWindow mf
     
-    -- menus
-    menus <- setupMenus ss
-
      -- create statusbar field
     statusBar' <- statusField   [text := "Welcome to wxHaskell"]
 
     -- set the statusbar and menubar
-    set mf [ statusBar := [statusBar'], menuBar := menus]
+    set mf [ statusBar := [statusBar']]
 
     set mf [on closing := onClosing ss]
         
     return ()
    
-   
 ----------------------------------------------------------
 -- Session data and ToString functions
 ----------------------------------------------------------
 
--- the session data as mutable state      
+data Session = Session {    mainFrame   :: Frame (),            -- Main window
+                            auiMgr      :: AuiManager (),       -- Application level AUI manager
+                            editorNB    :: AuiNotebook (),      -- Notebook of source file editors
+                            project     :: MProject,            -- Project data (mutable)
+                            menus       :: Menus }
+                                                        
+ 
+-- project data is mutable
 type MProject = MVar Project
 
+data Project = Project { files :: [SourceFile] }
 
 -- Session data
 data SourceFile = SourceFile {  edPanel     :: Panel (),        -- The panel added to the AuiNotebookManager
                                 editor      :: ScnEditor,       -- The Scintilla editor, child window of panel
                                 filePath    :: Maybe String,    -- Source file path, Nothing = file name not set yet
                                 isClean     :: Bool }           -- False = file needs saving
-                                                        
-data Session = Session {    mainFrame   :: Frame (),            -- Main window
-                            auiMgr      :: AuiManager (),       -- Application level AUI manager
-                            editorNB    :: AuiNotebook (),      -- Notebook of source file editors
-                            project     :: MProject}            -- Project data (mutable)
-                
- 
-data Project = Project { files :: [SourceFile] }
+
+data Menus = Menus {    menuFileOpen    :: MenuItem (), 
+                        menuFileSave    :: MenuItem (),
+                        menuFileSaveAs  :: MenuItem (),
+                        menuFileSaveAll :: MenuItem () }
 
 sourceFileToString :: SourceFile -> IO String
 sourceFileToString (SourceFile p e mfp ic) = do
@@ -76,7 +78,7 @@ sourceFileToString (SourceFile p e mfp ic) = do
         ", Clean: " ++ show (ic))
  
 sessionToString :: Session -> IO String
-sessionToString (Session mf _ _ mfs) = do
+sessionToString (Session mf _ _ mfs _) = do
     fs <- frameToString mf
     prs <- projectToString mfs
     return ("{Session} Main: " ++ fs ++ prs)
@@ -94,44 +96,9 @@ withProject f mpr = do
     pr' <- f pr
     putMVar mpr pr'
     return ()
-    
-------------------------------------------------------------    
--- Setup menus
-------------------------------------------------------------    
-
-setupMenus :: Session -> IO ([Menu()])
-setupMenus ss@(Session mf _ _ _)  = do
-
-    -- file menu  
-    menuFile        <- menuPane             [text := "&File"]
-    menuFileOpen    <- menuItem menuFile    [text := "Open ...\tCtrl-O", help := "Opens a file"]
-    set menuFileOpen [on command := onFileOpen ss]
-                                             
-    menuFileSave    <- menuItem menuFile    [text := "Save\tCtrl-S", help := "Saves a file"]
-    menuFileSaveAs  <- menuItem menuFile    [text := "Save As ...\tCtrl-Shift-S", help := "Saves a file"]
-    set menuFileSaveAs [on command := onFileSaveAs ss]
-                                             
-    menuAppendSeparator menuFile
-                             
-    menuQuit  <- menuQuit menuFile [help := "Quit the demo", on command := close mf]
-
-    menuEdit         <- menuPane            [text := "&Edit"]
-    menuEditUndo     <- menuItem menuEdit   [text := "Undo\tCtrl-Z"]
-    
-    menuBuild        <- menuPane            [text := "Build"]
-    menuBuildCompile <- menuItem menuBuild  [text := "Compile\tCtrl-F7",       help := "Compiles current source file"]
-    menuBuildBuild   <- menuItem menuBuild  [text := "Build\tF7",              help := "Build the project"]
-    menuBuildReBuild <- menuItem menuBuild  [text := "Rebuild\tCtrl-Alt-F7",   help := "Rebuild the project"]
-    menuBuildClean   <- menuItem menuBuild  [text := "Clean",                  help := "Clean the project"]
-          
-    -- create Help menu
-    menuHelp'        <- menuHelp []
-    menuHelpAbout    <- menuAbout menuHelp' [help := "About HeyHo", on command := infoDialog mf "About HeyHo" "mmmmm !"]
-    
-    return ([menuFile, menuEdit, menuBuild, menuHelp'])
 
 ------------------------------------------------------------    
--- Setup AUI manager and its child windows
+-- Setup main window, AUI manager its child windows and the menus
 ------------------------------------------------------------    
    
 setUpMainWindow :: Frame () -> IO (Session)    
@@ -158,7 +125,7 @@ setUpMainWindow mf = do
     auiManagerAddPaneByPaneInfo am grid api
     
     -- add editor notebook
-    (enb, sf) <- createEditorNoteBook mf
+    enb <- createEditorNoteBook mf
    
     api <- auiPaneInfoCreateDefault
     auiPaneInfoCaption api "Editor"
@@ -181,10 +148,60 @@ setUpMainWindow mf = do
     auiManagerUpdate am
  
     -- return the session data
-    mfs <- newEmptyMVar
-    putMVar mfs (Project [sf])
-    return (Session mf am enb mfs)
+    mpr <- newEmptyMVar
+    putMVar mpr (Project [])
 
+    -- setup the menus
+    menus@(Menus menuFileOpen menuFileSave menuFileSaveAs menuFileSaveAll) <- setupMenus mf 
+
+    -- create the session data
+    let ss = (Session mf am enb mpr menus)
+    
+    -- add blank file to editor
+    editorAddNewFile ss
+    
+    -- setup menu handlers
+    set menuFileOpen [on command := onFileOpen ss]
+    set menuFileSaveAs [on command := onFileSaveAs ss]
+    
+    return (ss)
+    
+------------------------------------------------------------    
+-- Setup menus
+------------------------------------------------------------    
+
+setupMenus :: Frame () -> IO (Menus)
+setupMenus mf  = do
+
+    -- file menu  
+    menuFile        <- menuPane             [text := "&File"]
+    menuFileOpen    <- menuItem menuFile    [text := "Open ...\tCtrl-O", help := "Opens a file"]
+                                             
+    menuFileSave    <- menuItem menuFile    [text := "Save\tCtrl-S", help := "Saves a file", enabled := False]
+    menuFileSaveAs  <- menuItem menuFile    [text := "Save As ...", help := "Saves a file", enabled := True]
+    menuFileSaveAll <- menuItem menuFile    [text := "Save All\tCtrl-Shift-S", help := "Saves all files", enabled := False]
+                                             
+    menuAppendSeparator menuFile
+                             
+    menuQuit  <- menuQuit menuFile [help := "Quit the demo", on command := close mf]
+
+    menuEdit         <- menuPane            [text := "&Edit"]
+    menuEditUndo     <- menuItem menuEdit   [text := "Undo\tCtrl-Z"]
+    
+    menuBuild        <- menuPane            [text := "Build"]
+    menuBuildCompile <- menuItem menuBuild  [text := "Compile\tCtrl-F7",       help := "Compiles current source file"]
+    menuBuildBuild   <- menuItem menuBuild  [text := "Build\tF7",              help := "Build the project"]
+    menuBuildReBuild <- menuItem menuBuild  [text := "Rebuild\tCtrl-Alt-F7",   help := "Rebuild the project"]
+    menuBuildClean   <- menuItem menuBuild  [text := "Clean",                  help := "Clean the project"]
+          
+    -- create Help menu
+    menuHelp'        <- menuHelp []
+    menuHelpAbout    <- menuAbout menuHelp' [help := "About HeyHo", on command := infoDialog mf "About HeyHo" "mmmmm !"]
+      
+    set mf [ menuBar := [menuFile, menuEdit, menuBuild, menuHelp']]
+
+    return (Menus menuFileOpen menuFileSave menuFileSaveAs menuFileSaveAll)
+    
 ------------------------------------------------------------    
 -- Event handlers
 ------------------------------------------------------------    
@@ -195,7 +212,7 @@ closeFile (SourceFile p e _ _) = do
     return (SourceFile p e' Nothing True)
 
 onClosing :: Session -> IO ()
-onClosing (Session mf am nb pr) = do 
+onClosing (Session mf am nb pr _) = do 
     withProject (\(Project fs) -> do
                     fs' <- mapM (\f -> do 
                                     f' <- closeFile f 
@@ -205,12 +222,39 @@ onClosing (Session mf am nb pr) = do
     windowDestroy mf
     return ()
 
-scnCallback :: SCNotification -> IO ()
-scnCallback _ = return ()
+scnCallback :: Session -> SCNotification -> IO ()
+scnCallback ss@(Session _ _ _ mpr (Menus _ mfs _ mfsa)) sn = do 
+
+    -- get the source file
+    pr@(Project fs) <- takeMVar mpr
+    putMVar mpr pr
+    
+    -- find source file from hwnd
+    let msf = find (\(SourceFile _ scn _ _) -> scnCompareHwnd scn sn) fs
+    
+    case msf of
+    
+        Just sf ->
+        
+            case (scnNotifyGetCode sn) of
+            
+                sCN_SAVEPOINTLEFT -> do 
+                    set mfs  [enabled := True]
+                    set mfsa [enabled := True]
+                    return ()
+                 
+                sCN_SAVEPOINTREACHED -> do
+                    set mfs  [enabled := False]
+                    set mfsa [enabled := False]
+                    return ()
+                 
+                otherwise -> return ()
+                
+        Nothing -> return ()
 
 -- File Open
 onFileOpen :: Session -> IO ()
-onFileOpen ss@(Session mf _ _ pr) = do
+onFileOpen ss@(Session mf _ _ pr _) = do
                                                    -- wxFD_OPEN wxFD_FILE_MUST_EXIST
     fd <- fileDialogCreate mf "Open file" "." "" "*.hs" (Point 100 100) 0x11
     ans <- dialogShowModal fd
@@ -224,7 +268,7 @@ onFileOpen ss@(Session mf _ _ pr) = do
 
 -- File Save As  
 onFileSaveAs :: Session -> IO ()
-onFileSaveAs ss@(Session mf _ _ _) = do
+onFileSaveAs ss@(Session mf _ _ _ _) = do
                                                       -- wxFD_SAVE wxFD_OVERWRITE_PROMPT
     fd <- fileDialogCreate mf "Save file as" "." "" "*.hs" (Point 100 100) 0x6
     rs <- dialogShowModal fd    
@@ -241,10 +285,10 @@ onFileSaveAs ss@(Session mf _ _ _) = do
 -----------------------------------------------------------------
 
 sessionGetMainFrame :: Session -> Frame ()
-sessionGetMainFrame (Session mf _ _ _) = mf
+sessionGetMainFrame (Session mf _ _ _ _) = mf
 
 fileOpen :: Session -> String -> Project -> IO (Project)
-fileOpen (Session _ _ nb _) fp pr@(Project fs) = do
+fileOpen ss@(Session _ _ nb _ _) fp pr@(Project fs) = do
 
     case fs of 
         -- assign file to initial editor window that is opened by the app
@@ -268,7 +312,7 @@ fileOpen (Session _ _ nb _) fp pr@(Project fs) = do
              else do
              
                 -- new file so add to list, create window and set focus
-                sf' <- openSourceFileEditor nb fp
+                sf' <- openSourceFileEditor ss fp
                 writeSourceFileEditor sf'
                 return (Project (sf':fs))
     
@@ -302,15 +346,15 @@ writeSourceFileEditor (SourceFile _ e (Just fp) _) = do
     scnSetText e text
     return ()
 
-openSourceFileEditor :: AuiNotebook () -> String -> IO (SourceFile)
-openSourceFileEditor nb fp = do
+openSourceFileEditor :: Session -> String -> IO (SourceFile)
+openSourceFileEditor ss@(Session _ _ nb _ _) fp = do
 
     -- create panel with scintilla editor inside
     p <- panel nb []
     hwnd <- windowGetHandle p
     scn <- scnCreateEditor hwnd
     scnConfigureHaskell scn
-    scnEnableEvents scn scnCallback 
+    scn' <- scnEnableEvents scn (scnCallback ss)
 
     -- add panel to notebook
     auiNotebookAddPage nb p (takeFileName fp) False 0
@@ -321,8 +365,11 @@ openSourceFileEditor nb fp = do
     ix <- auiNotebookGetPageIndex nb p
     auiNotebookSetSelection nb ix   
     
+    -- document clean
+    scnSetSavePoint scn'
+    
     -- source file info
-    let sf = (SourceFile p scn (Just fp) True)
+    let sf = (SourceFile p scn' (Just fp) True)
     
     return (sf)        
 {-
@@ -336,29 +383,37 @@ fileSave scn fn = do
 -- Create the source file editor notebook
 ------------------------------------------------------------    
 
-createEditorNoteBook :: Frame () -> IO (AuiNotebook (), SourceFile)
+createEditorNoteBook :: Frame f -> IO (AuiNotebook ())
 createEditorNoteBook f = do
 
     -- create the notebook
     nb <- auiNotebookCreate f idAny (Point 0 0) (Size 0 0) (wxCLIP_CHILDREN + wxAUI_NB_TOP + wxAUI_NB_CLOSE_ON_ACTIVE_TAB)
-    set nb []
-
+    return (nb)
+  
+editorAddNewFile :: Session -> IO (SourceFile)  
+editorAddNewFile ss@(Session _ _ nb mpr _) = do
+    
     -- create panel with scintilla editor inside
     p <- panel nb []
     hwnd <- windowGetHandle p
     scn <- scnCreateEditor hwnd
     scnConfigureHaskell scn
-    scnEnableEvents scn scnCallback 
 
     -- add panel to notebook
     auiNotebookAddPage nb p "..." False 0
     ta <- auiSimpleTabArtCreate
     auiNotebookSetArtProvider nb ta
-    
-    -- source file info
-    let sf = (SourceFile p scn Nothing True)
-    return (nb, sf)
 
+    -- enable events
+    scn' <- scnEnableEvents scn (scnCallback ss)
+    scnSetSavePoint scn'
+
+    -- update mutable project
+    let sf = (SourceFile p scn' Nothing True)
+    withProject (\(Project sfs) -> return (Project (sf:sfs))) mpr
+
+    return (sf)
+    
 ------------------------------------------------------------    
 -- Notebook
 ------------------------------------------------------------    

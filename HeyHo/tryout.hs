@@ -42,6 +42,8 @@ data Session = Session {    mainFrame   :: Frame' (),           -- Main window
 
 type MSession = MVar Session
 
+
+
 instance Show ScnEditor where
     show (ScnEditor (HWND p) (HWND e) me) = "{ScnEditor} Parent HWND: " ++ (showHex p "h") ++ ", Editor HWND: " ++ (showHex e "h") ++ ", Event Handler: ??" 
  

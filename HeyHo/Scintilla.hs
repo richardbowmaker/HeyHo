@@ -13,7 +13,9 @@ module Scintilla
     scnSetText,
     scnGetAllText,
     scnGetTextLen,
-    scnConfigureHaskell
+    scnConfigureHaskell,
+    scnSetSavePoint,
+    scnCompareHwnd
 ) where 
     
 import Control.Applicative ((<$>), (<*>))
@@ -243,6 +245,9 @@ scnCallback (ScnEditor _ _ (Just f)) p = do
 scnGetHwnd :: ScnEditor -> HWND
 scnGetHwnd (ScnEditor _ h _) = h
 
+scnNotifyGetHwnd :: SCNotification -> HWND
+scnNotifyGetHwnd (SCNotification x _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _) = x           
+
 scnNotifyGetCode :: SCNotification -> Word32
 scnNotifyGetCode (SCNotification _ _ x _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _) = x           
 
@@ -254,6 +259,9 @@ scnNotifyGetWParam (SCNotification _ _ _ _ _ _ _ _ _ _ _ x _ _ _ _ _ _ _ _ _ _ _
 
 scnNotifyGetListCompletionMethod :: SCNotification -> Int32
 scnNotifyGetListCompletionMethod (SCNotification _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ x) = x           
+
+scnCompareHwnd :: ScnEditor -> SCNotification -> Bool
+scnCompareHwnd scn sn = (scnGetHwnd scn) == (scnNotifyGetHwnd sn)
 
 ------------------------------------------------------------    
 -- Scintilla commands
@@ -344,4 +352,7 @@ scnStyleClearAll e = do
     c_ScnSendEditorII (scnGetHwnd e) sCI_STYLECLEARALL 0 0
     return ()
     
-    
+scnSetSavePoint :: ScnEditor -> IO ()
+scnSetSavePoint e = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_SETSAVEPOINT 0 0
+    return ()
