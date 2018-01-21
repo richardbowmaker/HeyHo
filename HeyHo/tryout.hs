@@ -8,6 +8,8 @@ import Data.List (find)
 import Numeric (showHex)
 import Data.String.Combinators (punctuate)
 import Data.Char (toLower)
+import System.IO
+import Control.Concurrent.STM
 
 
 
@@ -37,10 +39,15 @@ data SourceFile = SourceFile {  edPanel     :: Panel' (),       -- The panel add
 data Session = Session {    mainFrame   :: Frame' (),           -- Main window
                             auiMgr      :: AuiManager' (),      -- Application level AUI manager
                             editorNB    :: AuiNotebook' (),     -- Notebook of source file editors
-                            openFiles   :: [SourceFile] }       -- List of open source files
+                            project     :: TProject }           -- List of open source files
                 
 
 type MSession = MVar Session
+
+
+type TProject = TVar Project
+
+data Project = Project { files :: [SourceFile] }
 
 
 
@@ -50,16 +57,22 @@ instance Show ScnEditor where
 instance Show SourceFile where
     show (SourceFile p e mfp ic) = "{SourceFile} Panel: ??, " ++ show (e) ++ "), File: " ++ show (mfp) ++ ", Clean: " ++ show (ic)
     
-instance Show Session where
-    show (Session mf am nb []) = "{Session} Main: ??, AuiMgr: ??, Notebook ??, No files"
-    show (Session mf am nb fs) = "{Session} Main: ??, AuiMgr: ??, Notebook ??\n    " ++ (concat $ punctuate "\n    " $ map show fs) ++ "\n"
+sessionToString :: Session -> IO String
+sessionToString (Session mf am nb tpr) = do
+    let s1 = "{Session} Main: ??, AuiMgr: ??, Notebook ??, "
+    s2 <- projectToString tpr
+    return (s1 ++ s2)
     
-
+projectToString :: TProject -> IO String
+projectToString tpr = do
+    (Project fs) <- atomically $ readTVar tpr
+    let s = concat $ punctuate ", " $ map show fs
+    return ("Files : " ++ s)
+ 
 sf = (SourceFile (Panel' ()) (ScnEditor (HWND 0) (HWND 0) Nothing) Nothing True)    
 fs = [sf]
-ns = (Session (Frame' ()) (AuiManager' ()) (AuiNotebook' ()) fs)    
+pr = (Project [sf])
   
-
  
 main = start mainGUI
 
@@ -71,38 +84,47 @@ mainGUI = do
     
     p <- panel f []
      
-    mv <- newEmptyMVar
+
     
-    createSession mv f p
-    addSourceFile mv "some file 1.xxx"
+    ss <- newSession 
+    addSourceFile ss "some file 1.xxx"
    
-    addSourceFile mv "some file 2.xxx"
-    addSourceFile mv "some file 1.xxx"
-    addSourceFile mv "some file 3.xxx"
-    addSourceFile mv "some file 2.xxx"
-    addSourceFile mv "some file 4.xxx"
+    addSourceFile ss "some file 2.xxx"
+    addSourceFile ss "some file 1.xxx"
+    addSourceFile ss "some file 3.xxx"
+    addSourceFile ss "some file 2.xxx"
+    addSourceFile ss "some file 4.xxx"
 
      
-    ss <- takeMVar mv
+    s <- sessionToString ss
     
-    putStr (show ss ++ "\n")
+    putStr (show s ++ "\n")
     
     set f [ text := "Tryout", size := (Size 1300 800)]
 
     return ()
  
 
-createSession :: MSession -> Frame () -> Panel () -> IO ()
-createSession mv f p = do
-    let ss = (Session (Frame' ()) (AuiManager' ()) (AuiNotebook' ()) [(SourceFile (Panel' ()) scn Nothing True)])
-    putMVar mv ss
-    return ()
-    where scn = (ScnEditor (HWND 0) (HWND 0) Nothing)
+ 
+updateProject :: TProject -> (Project -> Project) -> IO (Project)
+updateProject tpr f = atomically (do 
+                        pr <- readTVar tpr
+                        let pr' = f pr
+                        writeTVar tpr pr'
+                        return (pr))
 
-addSourceFile :: MSession -> String -> IO ()
-addSourceFile mv fp = do
+readProject :: TProject -> IO Project
+readProject = atomically . readTVar 
+                        
+newSession :: IO Session
+newSession = do
+    tpr <- atomically $ newTVar pr
+    return (Session (Frame' ()) (AuiManager' ()) (AuiNotebook' ()) tpr)
 
-    ss@(Session mf am nb fns) <- takeMVar mv
+addSourceFile :: Session -> String -> IO ()
+addSourceFile ss@(Session mf am nb tpr) fp = do
+
+    (Project fns) <- readProject tpr
  
     case fns of 
         -- assign file to initial editor window that is opened by the app
@@ -110,26 +132,23 @@ addSourceFile mv fp = do
         [sf@(SourceFile _ _ Nothing True)] ->  do 
         
             -- set 1st slot
-            let ss = (Session mf am nb [sourceSetFileName sf fp])
-            putMVar mv ss
-            setSourceFileFocus mv fp
+            updateProject tpr (\_ -> (Project [sourceSetFileName sf fp]))
+            setSourceFileFocus ss fp
             return ()          
                                               
         otherwise -> do 
             if (isSourceFileInList fp fns) then do
                 
                 -- if already in file list then just switch focus to editor
-                setSourceFileFocus mv fp
-                putMVar mv ss
+                setSourceFileFocus ss fp
                 return ()
                 
              else do
              
                 -- new file so add to list, create window and set focus
-                sf' <- openSourceFileEditor mv fp
-                let ss = (Session mf am nb (sf':fns))
-                putMVar mv ss
-                setSourceFileFocus mv fp                        
+                sf' <- openSourceFileEditor ss fp
+                updateProject tpr (\(Project fns') -> (Project (sf':fns')))
+                setSourceFileFocus ss fp                        
                 return ()
     
 sourceSetFileName :: SourceFile -> String -> SourceFile
@@ -144,11 +163,11 @@ isSourceFileInList fp fs =
 sourceFilePathIs :: SourceFile -> Maybe String -> Bool
 sourceFilePathIs (SourceFile _ _ mfp1 _) mfp2 = fmap (map toLower) mfp1 == fmap (map toLower) mfp2
 
-setSourceFileFocus :: MSession -> String -> IO ()
-setSourceFileFocus mv fp = return ()
+setSourceFileFocus :: Session -> String -> IO ()
+setSourceFileFocus ss fp = return ()
 
-openSourceFileEditor :: MSession -> String -> IO (SourceFile)
-openSourceFileEditor mv fp = return (SourceFile (Panel' ()) (ScnEditor (HWND 0) (HWND 0) Nothing) (Just fp) True) 
+openSourceFileEditor :: Session -> String -> IO (SourceFile)
+openSourceFileEditor ss fp = return (SourceFile (Panel' ()) (ScnEditor (HWND 0) (HWND 0) Nothing) (Just fp) True) 
 
 findAndUpdate1 :: (a -> Bool) -> [a] -> a -> [a]
 findAndUpdate1 _ [] _ = []

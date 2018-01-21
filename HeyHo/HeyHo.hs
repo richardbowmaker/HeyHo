@@ -7,7 +7,8 @@ import Graphics.UI.WXCore
 import qualified Data.ByteString.Char8 as BS (pack, readFile, writeFile, ByteString)
 
 import Data.String.Combinators (punctuate)
-import Control.Concurrent.MVar
+import Control.Concurrent.STM
+
 import Data.List (find)
 import Data.Char (toLower)
 import System.FilePath.Windows (takeFileName)
@@ -48,12 +49,12 @@ mainGUI = do
 data Session = Session {    mainFrame   :: Frame (),            -- Main window
                             auiMgr      :: AuiManager (),       -- Application level AUI manager
                             editorNB    :: AuiNotebook (),      -- Notebook of source file editors
-                            project     :: MProject,            -- Project data (mutable)
+                            project     :: TProject,            -- Project data (mutable)
                             menus       :: Menus }
                                                         
  
 -- project data is mutable
-type MProject = MVar Project
+type TProject = TVar Project
 
 data Project = Project { files :: [SourceFile] }
 
@@ -78,24 +79,27 @@ sourceFileToString (SourceFile p e mfp ic) = do
         ", Clean: " ++ show (ic))
  
 sessionToString :: Session -> IO String
-sessionToString (Session mf _ _ mfs _) = do
+sessionToString (Session mf _ _ tpr _) = do
     fs <- frameToString mf
-    prs <- projectToString mfs
+    prs <- projectToString tpr
     return ("{Session} Main: " ++ fs ++ prs)
 
-projectToString :: MProject -> IO String
-projectToString mfs = do
-    (Project fs) <- takeMVar mfs    -- get list of source files
-    putMVar mfs (Project fs)
-    fss <- mapM sourceFileToString fs
-    return ("{Project} Files:\n     " ++ (concat $ punctuate "\n    " fss) ++ "\n")
+projectToString :: TProject -> IO String
+projectToString tpr = do
+    (Project fs) <- atomically $ readTVar tpr
+    ss <- mapM sourceFileToString fs
+    let s = concat $ punctuate ", " ss
+    return ("Files : " ++ s)
+    
+updateProject :: Session -> (Project -> Project) -> IO (Project)
+updateProject (Session _ _ _ tpr _) f = atomically (do 
+                        pr <- readTVar tpr
+                        let pr' = f pr
+                        writeTVar tpr pr'
+                        return (pr))
 
-withProject :: (Project -> IO (Project)) -> MProject -> IO ()
-withProject f mpr = do
-    pr <- takeMVar mpr
-    pr' <- f pr
-    putMVar mpr pr'
-    return ()
+readProject :: Session -> IO Project
+readProject (Session _ _ _ tpr _) = atomically $ readTVar tpr
 
 ------------------------------------------------------------    
 -- Setup main window, AUI manager its child windows and the menus
@@ -147,15 +151,14 @@ setUpMainWindow mf = do
 
     auiManagerUpdate am
  
-    -- return the session data
-    mpr <- newEmptyMVar
-    putMVar mpr (Project [])
+    -- create the mutable project data
+    tpr <- atomically $ newTVar (Project [])
 
     -- setup the menus
     menus@(Menus menuFileOpen menuFileSave menuFileSaveAs menuFileSaveAll) <- setupMenus mf 
 
     -- create the session data
-    let ss = (Session mf am enb mpr menus)
+    let ss = (Session mf am enb tpr menus)
     
     -- add blank file to editor
     editorAddNewFile ss
@@ -212,12 +215,9 @@ closeFile (SourceFile p e _ _) = do
     return (SourceFile p e' Nothing True)
 
 onClosing :: Session -> IO ()
-onClosing (Session mf am nb pr _) = do 
-    withProject (\(Project fs) -> do
-                    fs' <- mapM (\f -> do 
-                                    f' <- closeFile f 
-                                    return (f')) fs    
-                    return (Project fs)) pr
+onClosing ss@(Session mf am nb _ _) = do
+    (Project fs) <- readProject ss
+    mapM (\f -> closeFile f) fs
     auiManagerUnInit am
     windowDestroy mf
     return ()
@@ -243,21 +243,20 @@ scnCallback ss sn = do
         otherwise -> return ()
           
 updateFileCleanStatus :: Session -> SCNotification -> Bool -> IO ()
-updateFileCleanStatus ss@(Session _ _ _ mpr _) sn ic' = do 
+updateFileCleanStatus ss sn ic' = do 
 
     -- update the source file clean flag
-    (Project fs) <- takeMVar mpr   
-    let fs' = findAndUpdate2 (\(SourceFile p e fp ic) -> 
-                    if (scnCompareHwnd e sn) then (Just (SourceFile p e fp ic'))
-                    else Nothing ) fs       
-    putMVar mpr (Project fs') 
+    updateProject ss (\(Project fs) -> (Project (findAndUpdate2 updateIfSource fs)))
     return ()
+    
+    where updateIfSource = (\(SourceFile p e fp ic) -> 
+                                if (scnCompareHwnd e sn) then (Just (SourceFile p e fp ic'))
+                                else Nothing )
 
 updateSaveMenus :: Session -> IO ()   
-updateSaveMenus (Session _ _ nb mpr (Menus _ mS mSAs mSAll)) = do
+updateSaveMenus ss@(Session _ _ nb _ (Menus _ mS mSAs mSAll)) = do
 
-    pr@(Project fs) <- takeMVar mpr   
-    putMVar mpr pr 
+    (Project fs) <- readProject ss
 
     -- enable save all menu if any files are dirty
     if (any (\(SourceFile _ _ _ ic) -> not ic) fs) then
@@ -289,7 +288,7 @@ updateSaveMenus (Session _ _ nb mpr (Menus _ mS mSAs mSAll)) = do
 
 -- File Open
 onFileOpen :: Session -> IO ()
-onFileOpen ss@(Session mf _ _ pr _) = do
+onFileOpen ss@(Session mf _ _ _ _) = do
                                                    -- wxFD_OPEN wxFD_FILE_MUST_EXIST
     fd <- fileDialogCreate mf "Open file" "." "" "*.hs" (Point 100 100) 0x11
     ans <- dialogShowModal fd
@@ -323,11 +322,10 @@ sessionGetMainFrame :: Session -> Frame ()
 sessionGetMainFrame (Session mf _ _ _ _) = mf
 
 fileOpen :: Session -> String -> IO ()
-fileOpen ss@(Session _ _ nb mpr _) fp = do
+fileOpen ss@(Session _ _ nb tpr _) fp = do
 
-    (Project fs) <- takeMVar mpr
-    putMVar mpr (Project fs)
-    
+    (Project fs) <- readProject ss
+   
     case fs of 
         -- assign file to initial editor window that is opened by the app
         -- provided it is not dirty
@@ -337,8 +335,7 @@ fileOpen ss@(Session _ _ nb mpr _) fp = do
             let sf' = sourceSetFileName sf fp
             writeSourceFileEditor sf'
             auiNotebookSetPageText nb 0 (takeFileName fp)
-            (Project fs) <- takeMVar mpr
-            putMVar mpr (Project [sf'])
+            updateProject ss (\_ -> (Project [sf']))
             return ()          
                                               
         otherwise -> do
@@ -346,9 +343,7 @@ fileOpen ss@(Session _ _ nb mpr _) fp = do
             if (isSourceFileInList fp fs) then do
                 
                 -- if already in file list then just switch focus to editor
-                pr <- takeMVar mpr
-                putMVar mpr pr
-                setSourceFileFocus nb pr fp
+                setSourceFileFocus ss fp
                 return ()
                 
              else do
@@ -370,17 +365,21 @@ isSourceFileInList fp fs =
 sourceFilePathIs :: SourceFile -> Maybe String -> Bool
 sourceFilePathIs (SourceFile _ _ mfp1 _) mfp2 = fmap (map toLower) mfp1 == fmap (map toLower) mfp2
 
-setSourceFileFocus :: AuiNotebook() -> Project -> String -> IO ()
-setSourceFileFocus nb pr fp = do
-    case (getSourceFile pr fp) of
+setSourceFileFocus :: Session -> String -> IO ()
+setSourceFileFocus ss@(Session _ _ nb _ _) fp = do
+    sf <- getSourceFile ss fp
+    case (sf) of
         Just (SourceFile p _ _ _) -> do
             ix <- auiNotebookGetPageIndex nb p
             auiNotebookSetSelection nb ix 
             return ()
         Nothing -> return ()
 
-getSourceFile :: Project -> String -> Maybe SourceFile
-getSourceFile (Project fs) fp = find (\sf -> sourceFilePathIs sf (Just fp)) fs
+getSourceFile :: Session -> String -> IO (Maybe SourceFile)
+getSourceFile ss fp = do 
+    (Project fs) <- readProject ss
+    let sf = find (\sf -> sourceFilePathIs sf (Just fp)) fs
+    return (sf)
 
 writeSourceFileEditor :: SourceFile -> IO ()
 writeSourceFileEditor (SourceFile _ e (Just fp) _) = do
@@ -390,7 +389,7 @@ writeSourceFileEditor (SourceFile _ e (Just fp) _) = do
     return ()
 
 openSourceFileEditor :: Session -> String -> IO (SourceFile)
-openSourceFileEditor ss@(Session _ _ nb mpr _) fp = do
+openSourceFileEditor ss@(Session _ _ nb _ _) fp = do
 
     -- create panel with scintilla editor inside
     p <- panel nb []
@@ -410,8 +409,7 @@ openSourceFileEditor ss@(Session _ _ nb mpr _) fp = do
   
     -- add source file to project
     let sf = (SourceFile p scn' (Just fp) True)
-    (Project fs) <- takeMVar mpr
-    putMVar mpr (Project (sf:fs))
+    updateProject ss (\(Project fs) -> (Project (sf:fs)))
           
     return (sf) 
   
@@ -434,7 +432,7 @@ createEditorNoteBook f = do
     return (nb)
   
 editorAddNewFile :: Session -> IO (SourceFile)  
-editorAddNewFile ss@(Session _ _ nb mpr _) = do
+editorAddNewFile ss@(Session _ _ nb _ _) = do
     
     -- create panel with scintilla editor inside
     p <- panel nb []
@@ -453,7 +451,7 @@ editorAddNewFile ss@(Session _ _ nb mpr _) = do
 
     -- update mutable project
     let sf = (SourceFile p scn' Nothing True)
-    withProject (\(Project sfs) -> return (Project (sf:sfs))) mpr
+    updateProject ss (\(Project sfs) -> Project (sf:sfs)) 
 
     return (sf)
     
