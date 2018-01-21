@@ -6,18 +6,16 @@ import Graphics.UI.WX
 import Graphics.UI.WXCore
 import qualified Data.ByteString.Char8 as BS (pack, readFile, writeFile, ByteString)
 
-import Data.String.Combinators (punctuate)
-import Control.Concurrent.STM
 
-import Data.List (find)
-import Data.Char (toLower)
 import System.FilePath.Windows (takeFileName)
+import Data.List (find)
 
 
 -- project imports
 import Scintilla
 import ScintillaConstants
 import Misc
+import Session
 
       
 main = start mainGUI
@@ -42,64 +40,6 @@ mainGUI = do
         
     return ()
    
-----------------------------------------------------------
--- Session data and ToString functions
-----------------------------------------------------------
-
-data Session = Session {    mainFrame   :: Frame (),            -- Main window
-                            auiMgr      :: AuiManager (),       -- Application level AUI manager
-                            editorNB    :: AuiNotebook (),      -- Notebook of source file editors
-                            project     :: TProject,            -- Project data (mutable)
-                            menus       :: Menus }
-                                                        
- 
--- project data is mutable
-type TProject = TVar Project
-
-data Project = Project { files :: [SourceFile] }
-
--- Session data
-data SourceFile = SourceFile {  edPanel     :: Panel (),        -- The panel added to the AuiNotebookManager
-                                editor      :: ScnEditor,       -- The Scintilla editor, child window of panel
-                                filePath    :: Maybe String,    -- Source file path, Nothing = file name not set yet
-                                isClean     :: Bool }           -- False = file needs saving
-
-data Menus = Menus {    menuFileOpen    :: MenuItem (), 
-                        menuFileSave    :: MenuItem (),
-                        menuFileSaveAs  :: MenuItem (),
-                        menuFileSaveAll :: MenuItem () }
-
-sourceFileToString :: SourceFile -> IO String
-sourceFileToString (SourceFile p e mfp ic) = do
-    ps <- panelToString p    
-    return (
-        "{SourceFile} Panel: " ++  ps ++
-        ", (" ++ show (e) ++ "), " ++ 
-        ", File: " ++ show (mfp) ++ 
-        ", Clean: " ++ show (ic))
- 
-sessionToString :: Session -> IO String
-sessionToString (Session mf _ _ tpr _) = do
-    fs <- frameToString mf
-    prs <- projectToString tpr
-    return ("{Session} Main: " ++ fs ++ prs)
-
-projectToString :: TProject -> IO String
-projectToString tpr = do
-    (Project fs) <- atomically $ readTVar tpr
-    ss <- mapM sourceFileToString fs
-    let s = concat $ punctuate ", " ss
-    return ("Files : " ++ s)
-    
-updateProject :: Session -> (Project -> Project) -> IO (Project)
-updateProject (Session _ _ _ tpr _) f = atomically (do 
-                        pr <- readTVar tpr
-                        let pr' = f pr
-                        writeTVar tpr pr'
-                        return (pr))
-
-readProject :: Session -> IO Project
-readProject (Session _ _ _ tpr _) = atomically $ readTVar tpr
 
 ------------------------------------------------------------    
 -- Setup main window, AUI manager its child windows and the menus
@@ -151,21 +91,18 @@ setUpMainWindow mf = do
 
     auiManagerUpdate am
  
-    -- create the mutable project data
-    tpr <- atomically $ newTVar (Project [])
-
     -- setup the menus
-    menus@(Menus menuFileOpen menuFileSave menuFileSaveAs menuFileSaveAll) <- setupMenus mf 
+    menus <- setupMenus mf 
 
     -- create the session data
-    let ss = (Session mf am enb tpr menus)
+    ss <- createSession mf am enb (createProject []) menus
     
     -- add blank file to editor
     editorAddNewFile ss
     
     -- setup menu handlers
-    set menuFileOpen [on command := onFileOpen ss]
-    set menuFileSaveAs [on command := onFileSaveAs ss]
+    set (sessionGetFileOpen ss)   [on command := onFileOpen ss]
+    set (sessionGetFileSaveAs ss) [on command := onFileSaveAs ss]
     
     return (ss)
     
@@ -203,20 +140,22 @@ setupMenus mf  = do
       
     set mf [ menuBar := [menuFile, menuEdit, menuBuild, menuHelp']]
 
-    return (Menus menuFileOpen menuFileSave menuFileSaveAs menuFileSaveAll)
+    return (createMenus menuFileOpen menuFileSave menuFileSaveAs menuFileSaveAll)
     
 ------------------------------------------------------------    
 -- Event handlers
 ------------------------------------------------------------    
   
 closeFile :: SourceFile -> IO (SourceFile)
-closeFile (SourceFile p e _ _) = do
-    e' <- scnDisableEvents e
-    return (SourceFile p e' Nothing True)
+closeFile sf = do
+    e' <- scnDisableEvents $ sourceFileGetEditor sf
+    return (createSourceFile (sourceFileGetPanel sf) e' Nothing True)
 
 onClosing :: Session -> IO ()
-onClosing ss@(Session mf am nb _ _) = do
-    (Project fs) <- readProject ss
+onClosing ss = do
+    let mf = sessionGetMainFrame ss
+    let am = sessionGetAuiManager ss
+    fs  <- sessionReadSourceFiles ss
     mapM (\f -> closeFile f) fs
     auiManagerUnInit am
     windowDestroy mf
@@ -246,50 +185,53 @@ updateFileCleanStatus :: Session -> SCNotification -> Bool -> IO ()
 updateFileCleanStatus ss sn ic' = do 
 
     -- update the source file clean flag
-    updateProject ss (\(Project fs) -> (Project (findAndUpdate2 updateIfSource fs)))
+    updateProject ss (\pr -> (createProject (findAndUpdate2 updateIfSource (projectGetFiles pr))))
     return ()
     
-    where updateIfSource = (\(SourceFile p e fp ic) -> 
-                                if (scnCompareHwnd e sn) then (Just (SourceFile p e fp ic'))
+    where updateIfSource = (\sf -> 
+                                if (scnCompareHwnd (sourceFileGetEditor sf) sn) then 
+                                (Just (sourceFileSetIsClean sf ic'))
                                 else Nothing )
 
 updateSaveMenus :: Session -> IO ()   
-updateSaveMenus ss@(Session _ _ nb _ (Menus _ mS mSAs mSAll)) = do
+updateSaveMenus ss = do
 
-    (Project fs) <- readProject ss
+    fs <- sessionReadSourceFiles ss
 
     -- enable save all menu if any files are dirty
-    if (any (\(SourceFile _ _ _ ic) -> not ic) fs) then
-        set mSAll [enabled := True]
+    if anyDirtyFiles fs then
+        set (sessionGetFileSaveAll ss) [enabled := True]
     else
-        set mSAll [enabled := False]
+        set (sessionGetFileSaveAll ss) [enabled := False]
             
     -- get hwnd of the panel associated with the selected notebook tab
+    let nb = sessionGetNotebook ss
     ix <- auiNotebookGetSelection nb
     p <- auiNotebookGetPage nb ix
     hp <- windowGetHandle p
     
-    hs <- mapM (\(SourceFile p' _ _ ic) -> 
+    hs <- mapM (\sf -> 
                     do 
-                    hp' <- windowGetHandle p' 
-                    return (hp',ic)) fs
+                    hp' <- windowGetHandle $ sourceFileGetPanel sf 
+                    return (hp', sourceFileGetIsClean sf)) fs
 
     -- set file save enabled if the current tab selection is for a dirty file
     case find (\(hp',ic) -> (comparePtrs hp hp') && not ic) hs of
-        Just _  -> set mS [enabled := True]
-        Nothing -> set mS [enabled := False]
+        Just _  -> set (sessionGetFileSave ss) [enabled := True]
+        Nothing -> set (sessionGetFileSave ss) [enabled := False]
     
     -- enable save as if there are any tabs
     pc <- auiNotebookGetPageCount nb
     if pc == 0 then 
-        set mSAs [enabled := False]
+        set (sessionGetFileSaveAs ss) [enabled := False]
     else
-        set mSAs [enabled := True]
+        set (sessionGetFileSaveAs ss) [enabled := True]
 
 -- File Open
 onFileOpen :: Session -> IO ()
-onFileOpen ss@(Session mf _ _ _ _) = do
-                                                   -- wxFD_OPEN wxFD_FILE_MUST_EXIST
+onFileOpen ss = do
+    
+    let mf = sessionGetMainFrame ss                     -- wxFD_OPEN wxFD_FILE_MUST_EXIST
     fd <- fileDialogCreate mf "Open file" "." "" "*.hs" (Point 100 100) 0x11
     ans <- dialogShowModal fd
     if ans == wxID_OK
@@ -302,8 +244,9 @@ onFileOpen ss@(Session mf _ _ _ _) = do
 
 -- File Save As  
 onFileSaveAs :: Session -> IO ()
-onFileSaveAs ss@(Session mf _ _ _ _) = do
-                                                      -- wxFD_SAVE wxFD_OVERWRITE_PROMPT
+onFileSaveAs ss = do
+
+    let mf = sessionGetMainFrame ss                   -- wxFD_SAVE wxFD_OVERWRITE_PROMPT
     fd <- fileDialogCreate mf "Save file as" "." "" "*.hs" (Point 100 100) 0x6
     rs <- dialogShowModal fd    
     if rs == wxID_OK
@@ -318,78 +261,69 @@ onFileSaveAs ss@(Session mf _ _ _ _) = do
 -- Session management
 -----------------------------------------------------------------
 
-sessionGetMainFrame :: Session -> Frame ()
-sessionGetMainFrame (Session mf _ _ _ _) = mf
-
 fileOpen :: Session -> String -> IO ()
-fileOpen ss@(Session _ _ nb tpr _) fp = do
+fileOpen ss fp = do
 
-    (Project fs) <- readProject ss
-   
-    case fs of 
-        -- assign file to initial editor window that is opened by the app
-        -- provided it is not dirty
-        [sf@(SourceFile _ _ Nothing True)] ->  do 
-        
-            -- set 1st slot
-            let sf' = sourceSetFileName sf fp
-            writeSourceFileEditor sf'
-            auiNotebookSetPageText nb 0 (takeFileName fp)
-            updateProject ss (\_ -> (Project [sf']))
-            return ()          
-                                              
-        otherwise -> do
-        
-            if (isSourceFileInList fp fs) then do
-                
-                -- if already in file list then just switch focus to editor
-                setSourceFileFocus ss fp
-                return ()
-                
-             else do
-             
-                -- new file so add to list, create window and set focus
-                sf' <- openSourceFileEditor ss fp
-                writeSourceFileEditor sf'
-                return ()          
+    fs <- sessionReadSourceFiles ss
     
-sourceSetFileName :: SourceFile -> String -> SourceFile
-sourceSetFileName (SourceFile p ed _ ic) fp = (SourceFile p ed (Just fp) ic)
-  
-isSourceFileInList :: String -> [SourceFile] -> Bool
-isSourceFileInList fp fs = 
-    case find (\sf -> sourceFilePathIs sf (Just fp)) fs of
-        Just _ -> True
-        Nothing -> False
- 
-sourceFilePathIs :: SourceFile -> Maybe String -> Bool
-sourceFilePathIs (SourceFile _ _ mfp1 _) mfp2 = fmap (map toLower) mfp1 == fmap (map toLower) mfp2
-
+    if sessionIsOpeningState fs then do
+    
+        -- set 1st slot
+        let sf' = sourceFileSetFilePath (head fs) fp
+        let nb = sessionGetNotebook ss
+        writeSourceFileEditor sf'
+        auiNotebookSetPageText nb 0 (takeFileName fp)
+        updateProject ss (\_ -> createProject [sf'])
+        return ()          
+    
+    else do
+    
+        if (isSourceFileInList fp fs) then do
+            
+            -- if already in file list then just switch focus to editor
+            setSourceFileFocus ss fp
+            return ()
+            
+         else do
+         
+            -- new file so add to list, create window and set focus
+            sf' <- openSourceFileEditor ss fp
+            writeSourceFileEditor sf'
+            return ()          
+    
 setSourceFileFocus :: Session -> String -> IO ()
-setSourceFileFocus ss@(Session _ _ nb _ _) fp = do
-    sf <- getSourceFile ss fp
-    case (sf) of
-        Just (SourceFile p _ _ _) -> do
-            ix <- auiNotebookGetPageIndex nb p
+setSourceFileFocus ss fp = do
+    msf <- getSourceFile ss fp
+    case (msf) of
+        Just sf -> do
+            let nb = sessionGetNotebook ss
+            ix <- auiNotebookGetPageIndex nb $ sourceFileGetPanel sf
             auiNotebookSetSelection nb ix 
             return ()
         Nothing -> return ()
 
 getSourceFile :: Session -> String -> IO (Maybe SourceFile)
 getSourceFile ss fp = do 
-    (Project fs) <- readProject ss
+    fs <- sessionReadSourceFiles ss
     let sf = find (\sf -> sourceFilePathIs sf (Just fp)) fs
     return (sf)
 
 writeSourceFileEditor :: SourceFile -> IO ()
-writeSourceFileEditor (SourceFile _ e (Just fp) _) = do
-    text <- BS.readFile fp
-    scnSetText e text
-    scnSetSavePoint e
-    return ()
+writeSourceFileEditor sf = do
+    let mfp = sourceFileGetFilePath sf
+    case mfp of
+        Just fp -> do
+            text <- BS.readFile fp
+            let e = sourceFileGetEditor sf
+            scnSetText e text
+            scnSetSavePoint e
+            return ()
+        Nothing -> return () -- error
 
 openSourceFileEditor :: Session -> String -> IO (SourceFile)
-openSourceFileEditor ss@(Session _ _ nb _ _) fp = do
+openSourceFileEditor ss fp = do
+
+    let nb = sessionGetNotebook ss
 
     -- create panel with scintilla editor inside
     p <- panel nb []
@@ -408,8 +342,8 @@ openSourceFileEditor ss@(Session _ _ nb _ _) fp = do
     auiNotebookSetSelection nb ix  
   
     -- add source file to project
-    let sf = (SourceFile p scn' (Just fp) True)
-    updateProject ss (\(Project fs) -> (Project (sf:fs)))
+    let sf = createSourceFile p scn' (Just fp) True
+    updateProject ss (\pr -> projectSetFiles pr (sf:(projectGetFiles pr)))
           
     return (sf) 
   
@@ -432,8 +366,10 @@ createEditorNoteBook f = do
     return (nb)
   
 editorAddNewFile :: Session -> IO (SourceFile)  
-editorAddNewFile ss@(Session _ _ nb _ _) = do
+editorAddNewFile ss = do
     
+    let nb = sessionGetNotebook ss
+
     -- create panel with scintilla editor inside
     p <- panel nb []
     hwnd <- windowGetHandle p
@@ -450,8 +386,8 @@ editorAddNewFile ss@(Session _ _ nb _ _) = do
     scnSetSavePoint scn'
 
     -- update mutable project
-    let sf = (SourceFile p scn' Nothing True)
-    updateProject ss (\(Project sfs) -> Project (sf:sfs)) 
+    let sf = createSourceFile p scn' Nothing True
+    updateProject ss (\pr -> projectSetFiles pr (sf:(projectGetFiles pr)))
 
     return (sf)
     
