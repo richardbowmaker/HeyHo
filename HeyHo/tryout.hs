@@ -189,5 +189,8 @@ ifFoundThenElseIO _ [] _ io2 =  io2
 ifFoundThenElseIO p (x:xs) io1 io2 = do if p x then io1 else ifFoundThenElseIO p xs io1 io2
 
 
-
+findAndRemove :: (a -> Bool) -> [a] -> [a]
+findAndRemove _ [] = []
+findAndRemove f (x:xs) = if f x then rest else x : rest
+    where rest = findAndRemove f xs
   

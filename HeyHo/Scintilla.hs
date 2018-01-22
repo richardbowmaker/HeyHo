@@ -15,7 +15,10 @@ module Scintilla
     scnGetTextLen,
     scnConfigureHaskell,
     scnSetSavePoint,
-    scnCompareHwnd
+    scnCompareHwnd,
+    scnSetReadOnly,
+    scnAppendText,
+    scnAppendLine
 ) where 
     
 import Control.Applicative ((<$>), (<*>))
@@ -31,8 +34,9 @@ import Data.Strings (strNull)
 import Graphics.Win32.GDI.Types (COLORREF, HWND, rgb)
 import Graphics.UI.WXCore (varCreate, varGet)
 
+import Foreign.C.String (CString, withCString, withCStringLen)
+import Foreign.Marshal.Utils (fromBool)
 import Foreign.Ptr (FunPtr, Ptr, minusPtr, nullPtr)
-import Foreign.C.String (CString, withCString)
 import Foreign.Storable (Storable, alignment, sizeOf, peek, poke, pokeByteOff, peekByteOff)
 
 import Numeric (showHex)
@@ -216,9 +220,7 @@ instance Show ScnEditor where
 scnCreateEditor :: HWND -> IO (ScnEditor)
 scnCreateEditor parent = do
     hwnd <- c_ScnNewEditor parent
-    v <- varCreate (ScnEditor parent hwnd Nothing)
-    scn <- varGet v
-    return (scn)
+    return (ScnEditor parent hwnd Nothing)
     
 scnEnableEvents :: ScnEditor -> (SCNotification -> IO ()) -> IO (ScnEditor)
 scnEnableEvents (ScnEditor p c _) f = do
@@ -356,3 +358,19 @@ scnSetSavePoint :: ScnEditor -> IO ()
 scnSetSavePoint e = do
     c_ScnSendEditorII (scnGetHwnd e) sCI_SETSAVEPOINT 0 0
     return ()
+
+scnSetReadOnly :: ScnEditor -> Bool -> IO ()
+scnSetReadOnly e b = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_SETREADONLY (fromBool b :: Word64) 0
+    return ()
+    
+scnAppendText :: ScnEditor -> String -> IO ()
+scnAppendText e s = do
+    withCStringLen s (\(cs, l) -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_APPENDTEXT (fromIntegral l :: Word64) cs)
+    return ()
+    
+scnAppendLine :: ScnEditor -> String -> IO ()
+scnAppendLine scn s = scnAppendText scn (s ++ "\n")
+  
+  
+    

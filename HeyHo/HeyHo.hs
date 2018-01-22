@@ -12,9 +12,10 @@ import Data.List (find)
 
 
 -- project imports
+import Debug
+import Misc
 import Scintilla
 import ScintillaConstants
-import Misc
 import Session
 
       
@@ -88,6 +89,20 @@ setUpMainWindow mf = do
     auiPaneInfoCloseButton api True
 
     auiManagerAddPaneByPaneInfo am nb api
+    
+    -- add floating debug window
+    dp <- panel mf [size := (Size 800 800)]
+    hwnd <- windowGetHandle dp
+    scn <- scnCreateEditor hwnd
+    scnConfigureHaskell scn
+    scnSetReadOnly scn True
+    
+    api <- auiPaneInfoCreateDefault
+    auiPaneInfoCaption api "Debug"
+    auiPaneInfoFloat api
+    auiPaneInfoCloseButton api True
+
+    auiManagerAddPaneByPaneInfo am dp api   
 
     auiManagerUpdate am
  
@@ -95,7 +110,7 @@ setUpMainWindow mf = do
     menus <- setupMenus mf 
 
     -- create the session data
-    ss <- createSession mf am enb (createProject []) menus
+    ss <- createSession mf am enb (createProject []) menus scn
     
     -- add blank file to editor
     editorAddNewFile ss
@@ -104,6 +119,9 @@ setUpMainWindow mf = do
     set (sessionGetFileOpen ss)   [on command := onFileOpen ss]
     set (sessionGetFileSaveAs ss) [on command := onFileSaveAs ss]
     
+    set enb [on auiNotebookOnPageCloseEvent   := editorPageClose ss]
+    set enb [on auiNotebookOnPageChangedEvent := editorPageChanged ss]
+   
     return (ss)
     
 ------------------------------------------------------------    
@@ -149,7 +167,8 @@ setupMenus mf  = do
 closeFile :: SourceFile -> IO (SourceFile)
 closeFile sf = do
     e' <- scnDisableEvents $ sourceFileGetEditor sf
-    return (createSourceFile (sourceFileGetPanel sf) e' Nothing True)
+    sf <- createSourceFile (sourceFileGetPanel sf) e' Nothing True
+    return (sf)
 
 onClosing :: Session -> IO ()
 onClosing ss = do
@@ -197,35 +216,48 @@ updateSaveMenus :: Session -> IO ()
 updateSaveMenus ss = do
 
     fs <- sessionReadSourceFiles ss
+    
+    case fs of
+    
+        [] -> do
+        
+                set (sessionGetFileSave ss)    [enabled := False]
+                set (sessionGetFileSaveAs ss)  [enabled := False]
+                set (sessionGetFileSaveAll ss) [enabled := False]
+                return ()
+        
+        otherwise -> do
 
-    -- enable save all menu if any files are dirty
-    if anyDirtyFiles fs then
-        set (sessionGetFileSaveAll ss) [enabled := True]
-    else
-        set (sessionGetFileSaveAll ss) [enabled := False]
+            -- enable save all menu if any files are dirty
+            if anyDirtyFiles fs then
+                set (sessionGetFileSaveAll ss) [enabled := True]
+            else
+                set (sessionGetFileSaveAll ss) [enabled := False]
+                    
+            -- get hwnd of the panel associated with the selected notebook tab
+            let nb = sessionGetNotebook ss
+            ix <- auiNotebookGetSelection nb
+            p <- auiNotebookGetPage nb ix
+            hp <- windowGetHandle p
             
-    -- get hwnd of the panel associated with the selected notebook tab
-    let nb = sessionGetNotebook ss
-    ix <- auiNotebookGetSelection nb
-    p <- auiNotebookGetPage nb ix
-    hp <- windowGetHandle p
-    
-    hs <- mapM (\sf -> 
-                    do 
-                    hp' <- windowGetHandle $ sourceFileGetPanel sf 
-                    return (hp', sourceFileGetIsClean sf)) fs
+            hs <- mapM (\sf -> 
+                            do 
+                            hp' <- windowGetHandle $ sourceFileGetPanel sf 
+                            return (hp', sourceFileGetIsClean sf)) fs
 
-    -- set file save enabled if the current tab selection is for a dirty file
-    case find (\(hp',ic) -> (comparePtrs hp hp') && not ic) hs of
-        Just _  -> set (sessionGetFileSave ss) [enabled := True]
-        Nothing -> set (sessionGetFileSave ss) [enabled := False]
-    
-    -- enable save as if there are any tabs
-    pc <- auiNotebookGetPageCount nb
-    if pc == 0 then 
-        set (sessionGetFileSaveAs ss) [enabled := False]
-    else
-        set (sessionGetFileSaveAs ss) [enabled := True]
+            -- set file save enabled if the current tab selection is for a dirty file
+            case find (\(hp',ic) -> (comparePtrs hp hp') && not ic) hs of
+                Just _  -> set (sessionGetFileSave ss) [enabled := True]
+                Nothing -> set (sessionGetFileSave ss) [enabled := False]
+            
+            -- enable save as if there are any tabs
+            pc <- auiNotebookGetPageCount nb
+            if pc == 0 then 
+                set (sessionGetFileSaveAs ss) [enabled := False]
+            else
+                set (sessionGetFileSaveAs ss) [enabled := True]
+                
+            return ()
 
 -- File Open
 onFileOpen :: Session -> IO ()
@@ -256,6 +288,32 @@ onFileSaveAs ss = do
         return ()
     else 
         return ()
+        
+        
+editorPageClose :: Session -> EventAuiNotebook -> IO ()
+editorPageClose ss ev@(AuiNotebookPageClose _ (WindowSelection  _ mpw)) = do
+    case mpw of
+    
+        Nothing ->  do
+                updateSaveMenus ss
+                return ()
+                
+        Just (PageWindow _ w) -> do
+        
+                h <- windowGetHandle w
+                let hw = ptrToWord64 h
+                updateProject ss $ removeSourceFileFromProject hw
+                updateSaveMenus ss
+                return ()               
+                
+    where   
+            removeSourceFileFromProject hw pr = createProject (findAndRemove (isFileWindow hw) (projectGetFiles pr))
+            isFileWindow hw sf = hw == (sourceFileGetPanelHwnd sf)
+
+editorPageChanged :: Session -> EventAuiNotebook -> IO ()
+editorPageChanged ss ev@(AuiNotebookPageChanged _ _) = do
+    updateSaveMenus ss
+    return ()    
         
 -----------------------------------------------------------------
 -- Session management
@@ -342,7 +400,7 @@ openSourceFileEditor ss fp = do
     auiNotebookSetSelection nb ix  
   
     -- add source file to project
-    let sf = createSourceFile p scn' (Just fp) True
+    sf <- createSourceFile p scn' (Just fp) True
     updateProject ss (\pr -> projectSetFiles pr (sf:(projectGetFiles pr)))
           
     return (sf) 
@@ -358,11 +416,11 @@ fileSave scn fn = do
 -- Create the source file editor notebook
 ------------------------------------------------------------    
 
-createEditorNoteBook :: Frame f -> IO (AuiNotebook ())
-createEditorNoteBook f = do
+createEditorNoteBook :: Frame mf -> IO (AuiNotebook ())
+createEditorNoteBook mf = do
 
     -- create the notebook
-    nb <- auiNotebookCreate f idAny (Point 0 0) (Size 0 0) (wxCLIP_CHILDREN + wxAUI_NB_TOP + wxAUI_NB_CLOSE_ON_ACTIVE_TAB)
+    nb <- auiNotebookCreate mf idAny (Point 0 0) (Size 0 0) (wxCLIP_CHILDREN + wxAUI_NB_TOP + wxAUI_NB_CLOSE_ON_ACTIVE_TAB)
     return (nb)
   
 editorAddNewFile :: Session -> IO (SourceFile)  
@@ -386,7 +444,7 @@ editorAddNewFile ss = do
     scnSetSavePoint scn'
 
     -- update mutable project
-    let sf = createSourceFile p scn' Nothing True
+    sf <- createSourceFile p scn' Nothing True
     updateProject ss (\pr -> projectSetFiles pr (sf:(projectGetFiles pr)))
 
     return (sf)

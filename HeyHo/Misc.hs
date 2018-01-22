@@ -8,14 +8,15 @@ module Misc
     ptrToWord64,
     findAndUpdate1,
     findAndUpdate2,
-    comparePtrs
+    comparePtrs,
+    isSameWindow,
+    findAndRemove
 ) where
 
 import Foreign.Ptr (FunPtr, Ptr, minusPtr, nullPtr)
 import Numeric (showHex)
 import Graphics.UI.WXCore
 import Data.Word (Word64)
-
 
 ptrToString :: Ptr a -> String
 ptrToString p = "0x0" ++ (showHex (minusPtr p nullPtr) "")
@@ -50,6 +51,17 @@ findAndUpdate2 f (x:xs) =
         Just x' -> x' 
         Nothing -> x) : findAndUpdate2 f xs
      
-
 comparePtrs :: Ptr a -> Ptr a -> Bool
 comparePtrs p1 p2 = (ptrToWord64 p1) == (ptrToWord64 p2)
+
+isSameWindow :: Window () -> Window () -> IO Bool
+isSameWindow w1 w2 = do
+    h1 <- windowGetHandle w1
+    h2 <- windowGetHandle w2
+    return (comparePtrs h1 h2)
+
+findAndRemove :: (a -> Bool) -> [a] -> [a]
+findAndRemove _ [] = []
+findAndRemove f (x:xs) = if f x then rest else x : rest
+    where rest = findAndRemove f xs
+
