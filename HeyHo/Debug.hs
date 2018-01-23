@@ -10,9 +10,12 @@ import Graphics.UI.WXCore
 import Data.Word (Word64)
 
 import Scintilla
+import Session
 
-debugOut :: ScnEditor -> String -> IO ()
-debugOut e s = do
+debugOut :: Session -> String -> IO ()
+debugOut ss s = do
+    let e = sessionGetDebug ss
     scnSetReadOnly e False
     scnAppendLine e s
     scnSetReadOnly e True
+    return ()

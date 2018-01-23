@@ -9,6 +9,8 @@ import qualified Data.ByteString.Char8 as BS (pack, readFile, writeFile, ByteStr
 
 import System.FilePath.Windows (takeFileName)
 import Data.List (find)
+import Data.Word (Word64)
+
 
 
 -- project imports
@@ -116,8 +118,9 @@ setUpMainWindow mf = do
     editorAddNewFile ss
     
     -- setup menu handlers
-    set (sessionGetFileOpen ss)   [on command := onFileOpen ss]
-    set (sessionGetFileSaveAs ss) [on command := onFileSaveAs ss]
+    set (sessionMenuListGet ss "FileOpen")   [on command := onFileOpen   ss]
+    set (sessionMenuListGet ss "FileSaveAs") [on command := onFileSaveAs ss]
+    set (sessionMenuListGet ss "FileClose")  [on command := onFileClose  ss]
     
     set enb [on auiNotebookOnPageCloseEvent   := editorPageClose ss]
     set enb [on auiNotebookOnPageChangedEvent := editorPageChanged ss]
@@ -128,16 +131,18 @@ setUpMainWindow mf = do
 -- Setup menus
 ------------------------------------------------------------    
 
-setupMenus :: Frame () -> IO (Menus)
+setupMenus :: Frame () -> IO (SessionMenuList)
 setupMenus mf  = do
 
     -- file menu  
-    menuFile        <- menuPane             [text := "&File"]
-    menuFileOpen    <- menuItem menuFile    [text := "Open ...\tCtrl-O", help := "Opens a file"]
-                                             
-    menuFileSave    <- menuItem menuFile    [text := "Save\tCtrl-S", help := "Saves a file", enabled := False]
-    menuFileSaveAs  <- menuItem menuFile    [text := "Save As ...", help := "Saves a file", enabled := True]
-    menuFileSaveAll <- menuItem menuFile    [text := "Save All\tCtrl-Shift-S", help := "Saves all files", enabled := False]
+    menuFile            <- menuPane             [text := "&File"]
+    menuFileOpen        <- menuItem menuFile    [text := "Open ...\tCtrl-O",        help := "Opens a file"]
+    menuFileNew         <- menuItem menuFile    [text := "New\tCtrl-N",             help := "Starts a new file"]
+    menuFileClose       <- menuItem menuFile    [text := "Close",                   help := "Closes the current file"]
+    menuFileCloseAll    <- menuItem menuFile    [text := "Close All",               help := "Closes all files"]                                             
+    menuFileSave        <- menuItem menuFile    [text := "Save\tCtrl-S",            help := "Saves a file", enabled := False]
+    menuFileSaveAs      <- menuItem menuFile    [text := "Save As ...",             help := "Saves a file"]
+    menuFileSaveAll     <- menuItem menuFile    [text := "Save All\tCtrl-Shift-S",  help := "Saves all files", enabled := False]
                                              
     menuAppendSeparator menuFile
                              
@@ -158,7 +163,16 @@ setupMenus mf  = do
       
     set mf [ menuBar := [menuFile, menuEdit, menuBuild, menuHelp']]
 
-    return (createMenus menuFileOpen menuFileSave menuFileSaveAs menuFileSaveAll)
+    -- create lookup list of menus for session data
+    ml <- sessionMenuListCreate [   ("FileOpen",        menuFileOpen), 
+                                    ("FileSave",        menuFileSave), 
+                                    ("FileNew",         menuFileNew), 
+                                    ("FileClose",       menuFileClose), 
+                                    ("FileCloseAll",    menuFileCloseAll), 
+                                    ("FileSaveAs",      menuFileSaveAs), 
+                                    ("FileSaveAll",     menuFileSaveAll)] 
+    
+    return (ml)
     
 ------------------------------------------------------------    
 -- Event handlers
@@ -178,6 +192,13 @@ onClosing ss = do
     mapM (\f -> closeFile f) fs
     auiManagerUnInit am
     windowDestroy mf
+    return ()
+    
+onFileClose :: Session -> IO ()
+onFileClose ss = do
+    sf <- enbGetSelectedSourceFile ss
+    let e = sourceFileGetEditor sf
+    scnClose e
     return ()
 
 scnCallback :: Session -> SCNotification -> IO ()
@@ -212,53 +233,21 @@ updateFileCleanStatus ss sn ic' = do
                                 (Just (sourceFileSetIsClean sf ic'))
                                 else Nothing )
 
+-- updates the enabled state of the Save, SaveAs and SaveAll menus                                
 updateSaveMenus :: Session -> IO ()   
 updateSaveMenus ss = do
 
     fs <- sessionReadSourceFiles ss
+    ic <- enbSelectedSourceFileIsClean ss
+   
+    set (sessionMenuListGet ss "FileSave")      [enabled := not ic]
+    set (sessionMenuListGet ss "FileSaveAs")    [enabled := length fs > 0]
+    set (sessionMenuListGet ss "FileClose")     [enabled := length fs > 0]
+    set (sessionMenuListGet ss "FileCloseAll")  [enabled := length fs > 0]
+    set (sessionMenuListGet ss "FileSaveAll")   [enabled := anyDirtyFiles fs]
+     
+    return ()
     
-    case fs of
-    
-        [] -> do
-        
-                set (sessionGetFileSave ss)    [enabled := False]
-                set (sessionGetFileSaveAs ss)  [enabled := False]
-                set (sessionGetFileSaveAll ss) [enabled := False]
-                return ()
-        
-        otherwise -> do
-
-            -- enable save all menu if any files are dirty
-            if anyDirtyFiles fs then
-                set (sessionGetFileSaveAll ss) [enabled := True]
-            else
-                set (sessionGetFileSaveAll ss) [enabled := False]
-                    
-            -- get hwnd of the panel associated with the selected notebook tab
-            let nb = sessionGetNotebook ss
-            ix <- auiNotebookGetSelection nb
-            p <- auiNotebookGetPage nb ix
-            hp <- windowGetHandle p
-            
-            hs <- mapM (\sf -> 
-                            do 
-                            hp' <- windowGetHandle $ sourceFileGetPanel sf 
-                            return (hp', sourceFileGetIsClean sf)) fs
-
-            -- set file save enabled if the current tab selection is for a dirty file
-            case find (\(hp',ic) -> (comparePtrs hp hp') && not ic) hs of
-                Just _  -> set (sessionGetFileSave ss) [enabled := True]
-                Nothing -> set (sessionGetFileSave ss) [enabled := False]
-            
-            -- enable save as if there are any tabs
-            pc <- auiNotebookGetPageCount nb
-            if pc == 0 then 
-                set (sessionGetFileSaveAs ss) [enabled := False]
-            else
-                set (sessionGetFileSaveAs ss) [enabled := True]
-                
-            return ()
-
 -- File Open
 onFileOpen :: Session -> IO ()
 onFileOpen ss = do
@@ -294,7 +283,8 @@ editorPageClose :: Session -> EventAuiNotebook -> IO ()
 editorPageClose ss ev@(AuiNotebookPageClose _ (WindowSelection  _ mpw)) = do
     case mpw of
     
-        Nothing ->  do
+        Nothing ->  do -- shouldn't happen
+                 
                 updateSaveMenus ss
                 return ()
                 
@@ -449,6 +439,43 @@ editorAddNewFile ss = do
 
     return (sf)
     
+------------------------------------------------------------    
+-- Editor notebook helpers
+------------------------------------------------------------    
+    
+-- returns the HWND of the child panel of the currently selected notebook page
+enbGetSelectedTabHwnd :: Session -> IO Word64
+enbGetSelectedTabHwnd ss = do
+    let nb = sessionGetNotebook ss
+    ix <- auiNotebookGetSelection nb
+    p <- auiNotebookGetPage nb ix
+    hp <- windowGetHandle p
+    return (ptrToWord64 hp)
+ 
+-- returns the source file for the currently selected tab
+enbGetSelectedSourceFile :: Session -> IO SourceFile
+enbGetSelectedSourceFile ss = do  
+    fs <- sessionReadSourceFiles ss
+    hp <- enbGetSelectedTabHwnd ss   
+    case (find (\sf -> sourceFileMatchesHwnd sf hp) fs) of
+        Just sf -> 
+            return (sf)
+        Nothing -> do 
+            -- should not occur, like this to simplfy calling code
+            debugOut ss "*** error: enbGetSelectedSourceFile no source file for current tab"
+            return (head fs) 
+                  
+-- returns true of the source file the currently selected tab is clean 
+enbSelectedSourceFileIsClean :: Session -> IO Bool
+enbSelectedSourceFileIsClean ss = do  
+    fs <- sessionReadSourceFiles ss
+    if (length fs > 0) then do
+        sf <- enbGetSelectedSourceFile ss
+        let e = sourceFileGetEditor sf
+        ic <- scnIsClean e
+        return (ic)
+    else do return (True)
+
 ------------------------------------------------------------    
 -- Notebook
 ------------------------------------------------------------    

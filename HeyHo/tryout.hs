@@ -51,6 +51,7 @@ data Project = Project { files :: [SourceFile] }
 
 
 
+
 instance Show ScnEditor where
     show (ScnEditor (HWND p) (HWND e) me) = "{ScnEditor} Parent HWND: " ++ (showHex p "h") ++ ", Editor HWND: " ++ (showHex e "h") ++ ", Event Handler: ??" 
  
@@ -193,4 +194,29 @@ findAndRemove :: (a -> Bool) -> [a] -> [a]
 findAndRemove _ [] = []
 findAndRemove f (x:xs) = if f x then rest else x : rest
     where rest = findAndRemove f xs
+
+    
+    
+type MenuT = (String, String)
+type MenuList = [MenuT]
+ 
+menuListNew :: MenuList
+menuListNew = [("","")] 
+
+menuListAdd :: String -> String -> MenuList -> MenuList
+menuListAdd s mi ml = (s, mi) : ml
+
+menuListGet :: String -> MenuList -> String
+menuListGet s ml = 
+    case (lookup s ml) of
+        Just mi -> mi
+        Nothing -> snd $ last ml
+        
+menuListBuild :: IO MenuList        
+menuListBuild = do
+    let ml = menuListNew
+    let ml = menuListAdd "new" "NEW" ml
+    let ml = menuListAdd "open" "open" ml
+    return (ml)
+    
   

@@ -3,7 +3,6 @@ module Session
     Session,
     Project,
     SourceFile,
-    Menus,
     sourceFileToString,
     sessionToString,
     projectToString,
@@ -15,12 +14,13 @@ module Session
     sessionGetNotebook,
     sessionGetProject,
     sessionGetDebug,
-    createMenus,
+    SessionNameMenuPair,
+    SessionMenuList,
     sessionGetMenus,
-    sessionGetFileOpen,
-    sessionGetFileSave,
-    sessionGetFileSaveAs,
-    sessionGetFileSaveAll,
+    sessionMenuListNew,
+    sessionMenuListCreate,
+    sessionMenuListAdd,
+    sessionMenuListGet,
     createSourceFile,
     sourceFileGetPanel,
     sourceFileGetPanelHwnd,
@@ -29,6 +29,7 @@ module Session
     sourceFileGetFilePath,
     sourceFileGetIsClean,
     sourceFileSetFilePath,
+    sourceFileMatchesHwnd,
     projectGetFiles,
     projectSetFiles,
     createProject,
@@ -49,8 +50,6 @@ import Data.Char (toLower)
 import Data.Word (Word64)
 import Numeric (showHex)
 
-
-
 import Scintilla
 import Misc
 
@@ -62,7 +61,7 @@ data Session = Session {    mainFrame   :: Frame (),            -- Main window
                             auiMgr      :: AuiManager (),       -- Application level AUI manager
                             editorNB    :: AuiNotebook (),      -- Notebook of source file editors
                             project     :: TProject,            -- Project data (mutable)
-                            menus       :: Menus,
+                            menus       :: SessionMenuList,
                             debug       :: ScnEditor}
                                                         
  -- project data is mutable
@@ -77,10 +76,9 @@ data SourceFile = SourceFile {  edPanel     :: Panel (),        -- The panel add
                                 filePath    :: Maybe String,    -- Source file path, Nothing = file name not set yet
                                 isClean     :: Bool }           -- False = file needs saving
 
-data Menus = Menus {    menuFileOpen    :: MenuItem (), 
-                        menuFileSave    :: MenuItem (),
-                        menuFileSaveAs  :: MenuItem (),
-                        menuFileSaveAll :: MenuItem () }
+type SessionNameMenuPair = (String, MenuItem ())                               
+type SessionMenuList = [SessionNameMenuPair]
+
                         
 sessionGetMainFrame :: Session -> Frame ()
 sessionGetMainFrame (Session x _ _ _ _ _) = x
@@ -94,28 +92,42 @@ sessionGetNotebook (Session _ _ x _ _ _) = x
 sessionGetProject :: Session -> TProject
 sessionGetProject (Session _ _ _ x _ _) = x
 
-sessionGetMenus :: Session -> Menus
+sessionGetMenus :: Session -> SessionMenuList
 sessionGetMenus (Session _ _ _ _ x _) = x
 
 sessionGetDebug :: Session -> ScnEditor
 sessionGetDebug (Session _ _ _ _ _ x) = x
 
-createSession :: Frame () -> AuiManager () -> AuiNotebook () -> Project -> Menus -> ScnEditor -> IO (Session)
+createSession :: Frame () -> AuiManager () -> AuiNotebook () -> Project -> SessionMenuList -> ScnEditor -> IO (Session)
 createSession mf am nb pr ms db = do 
     tpr <- atomically $ newTVar (createProject [])
     return (Session mf am nb tpr ms db)
 
-sessionGetFileOpen :: Session -> MenuItem ()                        
-sessionGetFileOpen (Session _ _ _ _ (Menus x _ _ _) _) = x                        
+--------------------    
 
-sessionGetFileSave :: Session -> MenuItem ()                        
-sessionGetFileSave (Session _ _ _ _ (Menus _ x _ _) _) = x                        
+-- creates a new menu item lookup list
+-- a dummy entry is provided for failed lookups to simplfy client calls to menuListGet 
+sessionMenuListNew :: IO SessionMenuList 
+sessionMenuListNew = do
+    mi <- menuItemCreate
+    return ([("", mi)])
 
-sessionGetFileSaveAs :: Session -> MenuItem ()                        
-sessionGetFileSaveAs (Session _ _ _ _ (Menus _ _ x _) _) = x                        
+sessionMenuListCreate :: [SessionNameMenuPair] -> IO SessionMenuList
+sessionMenuListCreate nmps = do
+    ml <- sessionMenuListNew
+    return (sessionMenuListAdd nmps ml)
 
-sessionGetFileSaveAll :: Session -> MenuItem ()                        
-sessionGetFileSaveAll (Session _ _ _ _ (Menus _ _ _ x) _) = x                        
+sessionMenuListAdd :: [SessionNameMenuPair] -> SessionMenuList -> SessionMenuList
+sessionMenuListAdd nmps ml = ml ++ nmps
+
+sessionMenuListGet :: Session -> String -> MenuItem ()
+sessionMenuListGet ss s = 
+    case (lookup s ml) of
+        Just mi -> mi
+        Nothing -> snd $ last ml
+    where ml = sessionGetMenus ss
+        
+--------------------
 
 sourceFileGetPanel :: SourceFile -> Panel()                        
 sourceFileGetPanel (SourceFile x _ _ _ _ ) = x                        
@@ -140,6 +152,9 @@ sourceFileSetIsClean (SourceFile p hp e mfp _) ic = (SourceFile p hp e mfp ic)
 
 sourceFileSetFilePath :: SourceFile -> String -> SourceFile
 sourceFileSetFilePath (SourceFile p hp e _ ic) fp = (SourceFile p hp e (Just fp) ic)
+
+sourceFileMatchesHwnd :: SourceFile -> Word64 -> Bool
+sourceFileMatchesHwnd sf h = h == (sourceFileGetPanelHwnd sf)
 
 createSourceFile :: Panel() -> ScnEditor -> Maybe String -> Bool -> IO SourceFile
 createSourceFile p e mfp ic = do
@@ -175,10 +190,6 @@ createProject sfs = (Project sfs)
 
 anyDirtyFiles :: [SourceFile] -> Bool
 anyDirtyFiles fs = any (\(SourceFile _ _ _ _ ic) -> not ic) fs
-
-createMenus :: MenuItem () -> MenuItem () -> MenuItem () -> MenuItem () -> Menus
-createMenus menuFileOpen menuFileSave menuFileSaveAs menuFileSaveAll = 
-    (Menus menuFileOpen menuFileSave menuFileSaveAs menuFileSaveAll) 
  
 sourceFileToString :: SourceFile -> String
 sourceFileToString (SourceFile _ hp e mfp ic) = 

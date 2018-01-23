@@ -18,7 +18,9 @@ module Scintilla
     scnCompareHwnd,
     scnSetReadOnly,
     scnAppendText,
-    scnAppendLine
+    scnAppendLine,
+    scnIsClean,
+    scnClose
 ) where 
     
 import Control.Applicative ((<$>), (<*>))
@@ -372,5 +374,12 @@ scnAppendText e s = do
 scnAppendLine :: ScnEditor -> String -> IO ()
 scnAppendLine scn s = scnAppendText scn (s ++ "\n")
   
+scnIsClean :: ScnEditor -> IO Bool
+scnIsClean e = do
+    x <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETMODIFY  0 0
+    return (x == 0)
   
+scnClose :: ScnEditor -> IO ()
+scnClose e = c_ScnDestroyEditor (scnGetHwnd e)
+ 
     
