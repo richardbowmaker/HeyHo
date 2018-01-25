@@ -10,7 +10,8 @@ module Misc
     findAndUpdate2,
     comparePtrs,
     isSameWindow,
-    findAndRemove
+    findAndRemove,
+    doWhileTrueIO
 ) where
 
 import Foreign.Ptr (FunPtr, Ptr, minusPtr, nullPtr)
@@ -65,3 +66,12 @@ findAndRemove _ [] = []
 findAndRemove f (x:xs) = if f x then rest else x : rest
     where rest = findAndRemove f xs
 
+doWhileTrueIO :: (a -> IO Bool) -> [a] -> IO Bool    
+doWhileTrueIO _ [] = return (True)
+doWhileTrueIO p (x:xs) = do
+        b <- p x
+        if b then doWhileTrueIO p xs
+        else return (False)
+        
+        
+        

@@ -25,20 +25,18 @@ module Session
     sourceFileGetPanel,
     sourceFileGetPanelHwnd,
     sourceFileGetEditor,
-    sourceFileGetHwndEditor,
-    sourceFileGetFilePath,
-    sourceFileGetIsClean,
+    sourceFileGetEditorHwnd,
     sourceFileSetFilePath,
+    sourceFileGetFilePath,
     sourceFileMatchesHwnd,
     projectGetFiles,
     projectSetFiles,
     createProject,
-    sourceFileSetIsClean,
     sessionReadSourceFiles,
     sessionIsOpeningState,
-    anyDirtyFiles,
     isSourceFileInList,
-    sourceFilePathIs
+    sourceFilePathIs,
+    updateSourceFile
 ) where
 
 
@@ -73,8 +71,7 @@ data Project = Project { files :: [SourceFile] }
 data SourceFile = SourceFile {  edPanel     :: Panel (),        -- The panel added to the AuiNotebookManager
                                 hPanel      :: Word64,          -- HWND of panel
                                 editor      :: ScnEditor,       -- The Scintilla editor, child window of panel
-                                filePath    :: Maybe String,    -- Source file path, Nothing = file name not set yet
-                                isClean     :: Bool }           -- False = file needs saving
+                                filePath    :: Maybe String}    -- Source file path, Nothing = file name not set yet
 
 type SessionNameMenuPair = (String, MenuItem ())                               
 type SessionMenuList = [SessionNameMenuPair]
@@ -130,36 +127,30 @@ sessionMenuListGet ss s =
 --------------------
 
 sourceFileGetPanel :: SourceFile -> Panel()                        
-sourceFileGetPanel (SourceFile x _ _ _ _ ) = x                        
-                        
+sourceFileGetPanel (SourceFile x _ _ _ ) = x                        
+                      
 sourceFileGetPanelHwnd :: SourceFile -> Word64                        
-sourceFileGetPanelHwnd (SourceFile _ x _ _ _ ) = x                        
+sourceFileGetPanelHwnd (SourceFile _ x _ _ ) = x                        
 
 sourceFileGetEditor :: SourceFile -> ScnEditor                        
-sourceFileGetEditor (SourceFile _ _ x _ _) = x                        
+sourceFileGetEditor (SourceFile _ _ x _) = x                        
 
-sourceFileGetHwndEditor :: SourceFile -> Word64                        
-sourceFileGetHwndEditor (SourceFile _ _ e _ _) = ptrToWord64 $ scnGetHwnd e                        
+sourceFileGetEditorHwnd :: SourceFile -> Word64                        
+sourceFileGetEditorHwnd (SourceFile _ _ e _) = ptrToWord64 $ scnGetHwnd e                        
 
 sourceFileGetFilePath :: SourceFile -> Maybe String                        
-sourceFileGetFilePath (SourceFile _ _ _ x _) = x                       
-
-sourceFileGetIsClean :: SourceFile -> Bool                        
-sourceFileGetIsClean (SourceFile _ _ _ _ x) = x                        
-
-sourceFileSetIsClean :: SourceFile -> Bool -> SourceFile
-sourceFileSetIsClean (SourceFile p hp e mfp _) ic = (SourceFile p hp e mfp ic)
+sourceFileGetFilePath (SourceFile _ _ _ x) = x                       
 
 sourceFileSetFilePath :: SourceFile -> String -> SourceFile
-sourceFileSetFilePath (SourceFile p hp e _ ic) fp = (SourceFile p hp e (Just fp) ic)
+sourceFileSetFilePath (SourceFile p hp e _) fp = (SourceFile p hp e (Just fp))
 
 sourceFileMatchesHwnd :: SourceFile -> Word64 -> Bool
 sourceFileMatchesHwnd sf h = h == (sourceFileGetPanelHwnd sf)
 
-createSourceFile :: Panel() -> ScnEditor -> Maybe String -> Bool -> IO SourceFile
-createSourceFile p e mfp ic = do
+createSourceFile :: Panel() -> ScnEditor -> Maybe String -> IO SourceFile
+createSourceFile p e mfp = do
     hp <- windowGetHandle p
-    return (SourceFile p (ptrToWord64 hp) e mfp ic)
+    return (SourceFile p (ptrToWord64 hp) e mfp)
  
 isSourceFileInList :: String -> [SourceFile] -> Bool
 isSourceFileInList fp fs = 
@@ -168,7 +159,7 @@ isSourceFileInList fp fs =
         Nothing -> False
  
 sourceFilePathIs :: SourceFile -> Maybe String -> Bool
-sourceFilePathIs (SourceFile _ _ _ mfp1 _) mfp2 = fmap (map toLower) mfp1 == fmap (map toLower) mfp2
+sourceFilePathIs (SourceFile _ _ _ mfp1) mfp2 = fmap (map toLower) mfp1 == fmap (map toLower) mfp2
 
 projectGetFiles :: Project -> [SourceFile]
 projectGetFiles (Project x) = x
@@ -177,7 +168,7 @@ projectSetFiles :: Project -> [SourceFile] -> Project
 projectSetFiles (Project _) x = (Project x)
 
 sessionIsOpeningState :: [SourceFile] -> Bool
-sessionIsOpeningState [sf@(SourceFile _ _ _ Nothing True)] = True
+sessionIsOpeningState [sf@(SourceFile _ _ _ Nothing)] = True
 sessionIsOpeningState _ = False
 
 sessionReadSourceFiles :: Session -> IO [SourceFile]
@@ -188,15 +179,11 @@ sessionReadSourceFiles ss = do
 createProject :: [SourceFile] -> Project
 createProject sfs = (Project sfs)
 
-anyDirtyFiles :: [SourceFile] -> Bool
-anyDirtyFiles fs = any (\(SourceFile _ _ _ _ ic) -> not ic) fs
- 
 sourceFileToString :: SourceFile -> String
-sourceFileToString (SourceFile _ hp e mfp ic) = 
+sourceFileToString (SourceFile _ hp e mfp) = 
         "{SourceFile} Panel: 0x" ++ (showHex hp "" ) ++
         ", (" ++ show (e) ++ "), " ++ 
-        ", File: " ++ show (mfp) ++ 
-        ", Clean: " ++ show (ic)
+        ", File: " ++ show (mfp)
         
 sessionToString :: Session -> IO String
 sessionToString ss = do
@@ -211,14 +198,25 @@ projectToString tpr = do
     let s = concat $ punctuate ", " ss
     return ("Files : " ++ s)
     
-updateProject :: Session -> (Project -> Project) -> IO (Project)
+updateProject :: Session -> (Project -> Project) -> IO Project
 updateProject ss f = atomically (do
                         let tpr = sessionGetProject ss
                         pr <- readTVar $ tpr
                         let pr' = f pr
                         writeTVar tpr pr'
                         return (pr))
+                        
 
+-- updates the mutable project data to include the modified source file                        
+updateSourceFile :: Session -> SourceFile -> IO Project                        
+updateSourceFile ss sf' = do
+    pr' <- updateProject ss (\pr -> updateFile (projectGetFiles pr) h)
+    return (pr')
+    
+    where
+        h = sourceFileGetPanelHwnd sf'
+        updateFile sfs h = createProject(map (\sf -> if (sourceFileMatchesHwnd sf h) then sf' else sf) sfs)
+    
 readProject :: Session -> IO Project
 readProject ss = atomically $ readTVar $ sessionGetProject ss
 

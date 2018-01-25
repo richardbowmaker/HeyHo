@@ -8,8 +8,10 @@ import qualified Data.ByteString.Char8 as BS (pack, readFile, writeFile, ByteStr
 
 
 import System.FilePath.Windows (takeFileName)
-import Data.List (find)
+import Data.List (find, findIndex)
 import Data.Word (Word64)
+import Numeric (showHex)
+
 
 
 
@@ -118,11 +120,13 @@ setUpMainWindow mf = do
     editorAddNewFile ss
     
     -- setup menu handlers
-    set (sessionMenuListGet ss "FileOpen")   [on command := onFileOpen   ss]
-    set (sessionMenuListGet ss "FileSaveAs") [on command := onFileSaveAs ss]
-    set (sessionMenuListGet ss "FileClose")  [on command := onFileClose  ss]
+    set (sessionMenuListGet ss "FileOpen")    [on command := onFileOpen    ss]
+    set (sessionMenuListGet ss "FileSave")    [on command := onFileSave    ss]
+    set (sessionMenuListGet ss "FileSaveAs")  [on command := onFileSaveAs  ss]
+    set (sessionMenuListGet ss "FileSaveAll") [on command := onFileSaveAll ss]
+    set (sessionMenuListGet ss "FileClose")   [on command := onFileClose   ss]
     
-    set enb [on auiNotebookOnPageCloseEvent   := editorPageClose ss]
+--    set enb [on auiNotebookOnPageCloseEvent   := editorPageClose ss]
     set enb [on auiNotebookOnPageChangedEvent := editorPageChanged ss]
    
     return (ss)
@@ -163,7 +167,7 @@ setupMenus mf  = do
       
     set mf [ menuBar := [menuFile, menuEdit, menuBuild, menuHelp']]
 
-    -- create lookup list of menus for session data
+    -- create lookup list of menus for session data   
     ml <- sessionMenuListCreate [   ("FileOpen",        menuFileOpen), 
                                     ("FileSave",        menuFileSave), 
                                     ("FileNew",         menuFileNew), 
@@ -171,35 +175,267 @@ setupMenus mf  = do
                                     ("FileCloseAll",    menuFileCloseAll), 
                                     ("FileSaveAs",      menuFileSaveAs), 
                                     ("FileSaveAll",     menuFileSaveAll)] 
-    
+
     return (ml)
     
 ------------------------------------------------------------    
 -- Event handlers
 ------------------------------------------------------------    
-  
+ {-
 closeFile :: SourceFile -> IO (SourceFile)
 closeFile sf = do
     e' <- scnDisableEvents $ sourceFileGetEditor sf
     sf <- createSourceFile (sourceFileGetPanel sf) e' Nothing True
     return (sf)
 
-onClosing :: Session -> IO ()
-onClosing ss = do
-    let mf = sessionGetMainFrame ss
-    let am = sessionGetAuiManager ss
-    fs  <- sessionReadSourceFiles ss
-    mapM (\f -> closeFile f) fs
-    auiManagerUnInit am
-    windowDestroy mf
-    return ()
-    
+
+   
 onFileClose :: Session -> IO ()
 onFileClose ss = do
     sf <- enbGetSelectedSourceFile ss
     let e = sourceFileGetEditor sf
     scnClose e
     return ()
+  
+ -}
+
+onClosing :: Session -> IO ()
+onClosing ss = do
+    let mf = sessionGetMainFrame ss
+    let am = sessionGetAuiManager ss
+-- @    fs  <- sessionReadSourceFiles ss
+-- @    mapM (\f -> closeFile f) fs
+    auiManagerUnInit am
+    windowDestroy mf
+    return ()
+
+ 
+------------------------
+
+{-
+tabClose
+
+    get source file
+
+    if dirty then 
+        
+        case menuFileSave of
+            yes/no -> close ed; return
+            cancel -> veto close tab
+    
+    else 
+        return
+              
+menuClose
+
+    get source file
+    
+    if dirty then 
+        
+        case menuFileSave of
+            yes/no -> close tab + ed
+            cancel -> return
+    
+    else 
+        close tab + ed
+
+menuFileSave
+
+    get source file
+
+    if no name then
+        menuFileSaveAs    
+    else
+        saveFile (yes)
+    
+menuFileSaveAs 
+
+    save file dialog    
+    if yes then saveFile
+    return (ans)
+    
+closeAll
+
+        map fileclose to fs
+
+saveFile scn fp
+
+    save it
+    set save point
+-}
+   
+editorPageChanged :: Session -> EventAuiNotebook -> IO ()
+editorPageChanged ss ev@(AuiNotebookPageChanged _ _) = do
+    updateSaveMenus ss
+    return ()    
+
+{-
+editorPageClose :: Session -> EventAuiNotebook -> IO ()
+editorPageClose ss ev@(AuiNotebookPageClose _ (WindowSelection  _ mpw)) = do
+
+    sf = get source file based on hwnd
+    tabClose ss sf
+    
+    case mpw of
+    
+        Nothing ->  do -- shouldn't happen
+                 
+                updateSaveMenus ss
+                return ()
+                
+        Just (PageWindow _ w) -> do
+        
+                h <- windowGetHandle w
+                let hw = ptrToWord64 h
+                                
+                updateProject ss $ removeSourceFileFromProject hw
+                updateSaveMenus ss
+                return ()               
+                
+    where   
+            removeSourceFileFromProject hw pr = createProject (findAndRemove (isFileWindow hw) (projectGetFiles pr))
+            isFileWindow hw sf = hw == (sourceFileGetPanelHwnd sf)
+
+-}
+{- 
+fileCloseAll :: Session -> IO ()
+fileCloseAll ss = do
+    fs <- projectReadSourceFiles ss
+    mapM (\sf -> enbCloseTab ss sf) fs
+    return ()
+    
+fileClose :: Session -> IO ()
+fileClose ss = do
+    sf <- enbGetSelectedSourceFile ss
+    enbCloseTab ss sf
+    return ()
+       
+tabClose :: Session -> SourceFile -> IO 
+tabClose ss sf = do
+
+    let e = sourceFileGetEditor sf    
+    ic <- scnIsClean e
+
+    if ic then do
+        scnDisableEvents e
+        scnClose e
+        remove sf from project
+        return ()
+       
+    else do
+        if (fileSave ss) then do
+        remove sf from project
+            scnDisableEvents e
+            scnClose e
+            return ()
+        else do
+            return ()
+  
+    
+fileCloseSelected :: Session -> IO ()
+fileCloseSelected ss = enbCloseSelectedTab ss
+-}
+
+onFileSaveAs :: Session -> IO ()
+onFileSaveAs ss = do
+
+    sf <- enbGetSelectedSourceFile ss
+    fileSaveAs ss sf
+    return ()
+
+onFileSave :: Session -> IO ()
+onFileSave ss = do
+
+    sf <- enbGetSelectedSourceFile ss
+    fileSave ss sf
+    return ()
+    
+onFileSaveAll :: Session -> IO ()    
+onFileSaveAll ss = do   
+    fileSaveAll ss
+    return ()
+    
+fileSaveAll :: Session -> IO (Bool)
+fileSaveAll ss = do
+
+        sfs <- sessionReadSourceFiles ss
+        b <- doWhileTrueIO (fileSave ss) sfs
+        return (b)
+
+-- if file is dirty then writes it to file
+-- if no filename has been set then file save as is called
+-- returns false if user cancelled        
+fileSave :: Session -> SourceFile -> IO Bool
+fileSave ss sf = do
+
+    let e = sourceFileGetEditor sf
+    
+    let s1 = sourceFileToString sf
+    ic <- scnIsClean $ sourceFileGetEditor sf 
+    debugOut ss $ s1 ++ ", clean: " ++ show (ic)
+   
+    ic <- scnIsClean e
+    if (ic) then do
+        return (True)
+    else       
+        case (sourceFileGetFilePath sf) of
+            Just fp -> do
+                writeSourceFile sf
+                return (True)
+            
+            -- source file has no name, so prompt user for one
+            Nothing -> do
+                b <- fileSaveAs ss sf
+                return (b)
+                   
+-- File Save As, returns False if user opted to cancel the save 
+fileSaveAs :: Session -> SourceFile -> IO Bool
+fileSaveAs ss sf = do
+   
+    -- ensure source file is displayed
+    enbSelectTab ss sf
+    
+    -- prompt user for name to save to
+    let mf = sessionGetMainFrame ss                   -- wxFD_SAVE wxFD_OVERWRITE_PROMPT
+    fd <- fileDialogCreate mf "Save file as" "." "" "*.hs" (Point 100 100) 0x6
+    rs <- dialogShowModal fd 
+    
+    case rs of
+--        wxID_OK -> do
+-- ?? don't know how to fix pattern match against a function    
+        5100 -> do    
+            fp <- fileDialogGetPath fd
+            
+            -- save new name to mutable project data
+            let sf' = sourceFileSetFilePath sf fp
+            updateSourceFile ss sf'
+
+            writeSourceFile sf'
+            return (True)
+            
+        --wxID_CANCEL -> do
+        5101 -> do
+            return (False)
+            
+        otherwise  -> do
+            return (True)
+           
+-- writes file to disk and sets editor to clean
+writeSourceFile :: SourceFile -> IO ()
+writeSourceFile sf = do
+    let e = sourceFileGetEditor sf
+    case (sourceFileGetFilePath sf) of
+        Just fp -> do
+            bs <- scnGetAllText e
+            BS.writeFile fp bs
+            scnSetSavePoint e
+            return ()
+        
+        Nothing -> do
+            -- bug, shouldn't end up here
+            return ()
+            
+-----------------------    
 
 scnCallback :: Session -> SCNotification -> IO ()
 scnCallback ss sn = do 
@@ -210,32 +446,27 @@ scnCallback ss sn = do
     -- gives some nonsense about overlapping cases !! compiler bug
     
         2002 -> do -- sCN_SAVEPOINTREACHED
-            updateFileCleanStatus ss sn True
             updateSaveMenus ss
             return ()
 
         2003 -> do -- sCN_SAVEPOINTLEFT
-            updateFileCleanStatus ss sn False
             updateSaveMenus ss
             return ()
           
         otherwise -> return ()
           
-updateFileCleanStatus :: Session -> SCNotification -> Bool -> IO ()
-updateFileCleanStatus ss sn ic' = do 
-
-    -- update the source file clean flag
-    updateProject ss (\pr -> (createProject (findAndUpdate2 updateIfSource (projectGetFiles pr))))
-    return ()
-    
-    where updateIfSource = (\sf -> 
-                                if (scnCompareHwnd (sourceFileGetEditor sf) sn) then 
-                                (Just (sourceFileSetIsClean sf ic'))
-                                else Nothing )
 
 -- updates the enabled state of the Save, SaveAs and SaveAll menus                                
 updateSaveMenus :: Session -> IO ()   
 updateSaveMenus ss = do
+ 
+-- @ 
+    sf1 <- enbGetSelectedSourceFile ss
+    ic1 <- scnIsClean $ sourceFileGetEditor sf1
+    ic2 <- enbSelectedSourceFileIsClean ss
+   
+    debugOut ss $ (showHex (sourceFileGetEditorHwnd sf1) "") ++ ", clean: " ++ (show ic1) ++ " " ++ (show ic2)
+
 
     fs <- sessionReadSourceFiles ss
     ic <- enbSelectedSourceFileIsClean ss
@@ -244,9 +475,15 @@ updateSaveMenus ss = do
     set (sessionMenuListGet ss "FileSaveAs")    [enabled := length fs > 0]
     set (sessionMenuListGet ss "FileClose")     [enabled := length fs > 0]
     set (sessionMenuListGet ss "FileCloseAll")  [enabled := length fs > 0]
-    set (sessionMenuListGet ss "FileSaveAll")   [enabled := anyDirtyFiles fs]
-     
+    
+    b <- allFilesClean fs
+    set (sessionMenuListGet ss "FileSaveAll")   [enabled := not b]
+ 
     return ()
+    
+    where allFilesClean fs = do
+            b <- doWhileTrueIO (\sf -> scnIsClean $ sourceFileGetEditor sf) fs
+            return (b)
     
 -- File Open
 onFileOpen :: Session -> IO ()
@@ -262,49 +499,8 @@ onFileOpen ss = do
         return ()
     else
         return ()
+        
 
--- File Save As  
-onFileSaveAs :: Session -> IO ()
-onFileSaveAs ss = do
-
-    let mf = sessionGetMainFrame ss                   -- wxFD_SAVE wxFD_OVERWRITE_PROMPT
-    fd <- fileDialogCreate mf "Save file as" "." "" "*.hs" (Point 100 100) 0x6
-    rs <- dialogShowModal fd    
-    if rs == wxID_OK
-    then do    
-        fn <- fileDialogGetPath fd
---        fileSave ss fn
-        return ()
-    else 
-        return ()
-        
-        
-editorPageClose :: Session -> EventAuiNotebook -> IO ()
-editorPageClose ss ev@(AuiNotebookPageClose _ (WindowSelection  _ mpw)) = do
-    case mpw of
-    
-        Nothing ->  do -- shouldn't happen
-                 
-                updateSaveMenus ss
-                return ()
-                
-        Just (PageWindow _ w) -> do
-        
-                h <- windowGetHandle w
-                let hw = ptrToWord64 h
-                updateProject ss $ removeSourceFileFromProject hw
-                updateSaveMenus ss
-                return ()               
-                
-    where   
-            removeSourceFileFromProject hw pr = createProject (findAndRemove (isFileWindow hw) (projectGetFiles pr))
-            isFileWindow hw sf = hw == (sourceFileGetPanelHwnd sf)
-
-editorPageChanged :: Session -> EventAuiNotebook -> IO ()
-editorPageChanged ss ev@(AuiNotebookPageChanged _ _) = do
-    updateSaveMenus ss
-    return ()    
-        
 -----------------------------------------------------------------
 -- Session management
 -----------------------------------------------------------------
@@ -384,24 +580,18 @@ openSourceFileEditor ss fp = do
     auiNotebookAddPage nb p (takeFileName fp) False 0
     ta <- auiSimpleTabArtCreate
     auiNotebookSetArtProvider nb ta
-    
+      
+    -- add source file to project
+    sf <- createSourceFile p scn' (Just fp)
+    updateProject ss (\pr -> projectSetFiles pr (sf:(projectGetFiles pr)))
+          
     -- set focus to new page
     ix <- auiNotebookGetPageIndex nb p
     auiNotebookSetSelection nb ix  
-  
-    -- add source file to project
-    sf <- createSourceFile p scn' (Just fp) True
-    updateProject ss (\pr -> projectSetFiles pr (sf:(projectGetFiles pr)))
-          
+
     return (sf) 
   
-{-
-fileSave :: ScnEditor -> String -> IO ()
-fileSave scn fn = do
-    bs <- scnGetAllText scn
-    BS.writeFile fn bs
-    return ()
--}        
+
 ------------------------------------------------------------    
 -- Create the source file editor notebook
 ------------------------------------------------------------    
@@ -429,14 +619,17 @@ editorAddNewFile ss = do
     ta <- auiSimpleTabArtCreate
     auiNotebookSetArtProvider nb ta
 
+    sf <- createSourceFile p scn Nothing
+
     -- enable events
     scn' <- scnEnableEvents scn (scnCallback ss)
-    scnSetSavePoint scn'
 
     -- update mutable project
-    sf <- createSourceFile p scn' Nothing True
     updateProject ss (\pr -> projectSetFiles pr (sf:(projectGetFiles pr)))
 
+    
+    scnSetSavePoint scn'
+    
     return (sf)
     
 ------------------------------------------------------------    
@@ -456,7 +649,8 @@ enbGetSelectedTabHwnd ss = do
 enbGetSelectedSourceFile :: Session -> IO SourceFile
 enbGetSelectedSourceFile ss = do  
     fs <- sessionReadSourceFiles ss
-    hp <- enbGetSelectedTabHwnd ss   
+    hp <- enbGetSelectedTabHwnd ss
+   
     case (find (\sf -> sourceFileMatchesHwnd sf hp) fs) of
         Just sf -> 
             return (sf)
@@ -465,17 +659,61 @@ enbGetSelectedSourceFile ss = do
             debugOut ss "*** error: enbGetSelectedSourceFile no source file for current tab"
             return (head fs) 
                   
--- returns true of the source file the currently selected tab is clean 
+-- returns true if the source file of the currently selected tab is clean 
 enbSelectedSourceFileIsClean :: Session -> IO Bool
-enbSelectedSourceFileIsClean ss = do  
-    fs <- sessionReadSourceFiles ss
-    if (length fs > 0) then do
-        sf <- enbGetSelectedSourceFile ss
-        let e = sourceFileGetEditor sf
-        ic <- scnIsClean e
-        return (ic)
-    else do return (True)
+enbSelectedSourceFileIsClean ss = do
+    sf <- enbGetSelectedSourceFile ss
+    ic <- scnIsClean $ sourceFileGetEditor sf
+    return (ic)
+    
+enbCloseSelectedTab :: Session -> IO ()
+enbCloseSelectedTab ss = do
+    let nb = sessionGetNotebook ss
+    ix <- auiNotebookGetSelection nb
+    auiNotebookRemovePage nb ix
+    return ()
+    
+enbSelectTab :: Session -> SourceFile -> IO ()
+enbSelectTab ss sf = do
+    let nb = sessionGetNotebook ss
+    mix <- enbGetTabIndex ss sf
+    case mix of
+        Just ix -> do
+            auiNotebookSetSelection nb ix
+            return ()            
+        Nothing -> return ()
+    return ()
 
+enbCloseTab :: Session -> SourceFile -> IO ()
+enbCloseTab ss sf = do
+    let nb = sessionGetNotebook ss
+    mix <- enbGetTabIndex ss sf
+    case (mix) of
+        Just ix -> do
+            auiNotebookSetSelection nb ix
+            auiNotebookRemovePage nb ix
+            return ()
+        Nothing -> do
+            debugOut ss "*** error: enbCloseTab, source file not in tabs"
+            return ()
+
+enbGetTabIndex :: Session -> SourceFile -> IO (Maybe Int)
+enbGetTabIndex ss sf = do
+
+    let nb = sessionGetNotebook ss
+    pc <- auiNotebookGetPageCount nb
+
+    -- get list of window handles as ints
+    hs <- mapM (getHwnd nb) [0..(pc-1)]
+
+    -- find tab with hwnd that matches the source file
+    return (findIndex (\h -> sourceFileMatchesHwnd sf h) hs)
+    
+    where getHwnd nb i = do
+            w <- auiNotebookGetPage nb i
+            h <- windowGetHandle w
+            return (ptrToWord64 h)
+            
 ------------------------------------------------------------    
 -- Notebook
 ------------------------------------------------------------    
