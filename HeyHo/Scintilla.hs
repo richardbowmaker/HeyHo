@@ -27,7 +27,7 @@ import Control.Applicative ((<$>), (<*>))
 
 import Data.Word (Word32, Word64)
 import Data.Int (Int32, Int64)
-import qualified Data.ByteString as BS (replicate)
+import qualified Data.ByteString as BS (replicate, init, replicate, append)
 import Data.ByteString.Internal (ByteString)
 import Data.ByteString.Unsafe (unsafeUseAsCString)
 import Data.String.Combinators (punctuate)
@@ -46,7 +46,7 @@ import Numeric (showHex)
 -- project imports
 import ScintillaConstants
 import Misc
- 
+
  
 
 -----------------------
@@ -307,16 +307,17 @@ scnConfigureHaskell e = do
 -- set the entire content of the editor    
 scnSetText :: ScnEditor -> ByteString -> IO ()
 scnSetText e bs = do
-    unsafeUseAsCString bs (\cs -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_SETTEXT 0 cs)
+    let bs0 = BS.append bs (BS.replicate 1 0) -- add terminating null 
+    unsafeUseAsCString bs0 (\cs -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_SETTEXT 0 cs)
     return ()
 
 -- get all text from editor    
 scnGetAllText :: ScnEditor -> IO (ByteString)
 scnGetAllText e = do            
     len <- scnGetTextLen e
-    let bs = (BS.replicate len 0)   -- allocate buffer
-    unsafeUseAsCString bs (\cs -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_GETTEXT (fromIntegral len :: Word64) cs)
-    return (bs)
+    let bs = (BS.replicate (len+1) 0)   -- allocate buffer
+    unsafeUseAsCString bs (\cs -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_GETTEXT (fromIntegral (len+1) :: Word64) cs)   
+    return (BS.init bs) -- drop the zero byte at the end
     
 scnGetTextLen :: ScnEditor -> IO (Int)
 scnGetTextLen e = do

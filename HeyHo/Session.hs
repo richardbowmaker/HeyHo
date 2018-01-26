@@ -28,6 +28,7 @@ module Session
     sourceFileGetEditorHwnd,
     sourceFileSetFilePath,
     sourceFileGetFilePath,
+    sourceFileGetFilePathString,
     sourceFileMatchesHwnd,
     projectGetFiles,
     projectSetFiles,
@@ -36,7 +37,8 @@ module Session
     sessionIsOpeningState,
     isSourceFileInList,
     sourceFilePathIs,
-    updateSourceFile
+    updateSourceFile,
+    sourceFileIsSame
 ) where
 
 
@@ -141,6 +143,12 @@ sourceFileGetEditorHwnd (SourceFile _ _ e _) = ptrToWord64 $ scnGetHwnd e
 sourceFileGetFilePath :: SourceFile -> Maybe String                        
 sourceFileGetFilePath (SourceFile _ _ _ x) = x                       
 
+sourceFileGetFilePathString :: SourceFile -> String                        
+sourceFileGetFilePathString sf = 
+    case (sourceFileGetFilePath sf) of
+        Just fp -> fp
+        Nothing -> ""
+
 sourceFileSetFilePath :: SourceFile -> String -> SourceFile
 sourceFileSetFilePath (SourceFile p hp e _) fp = (SourceFile p hp e (Just fp))
 
@@ -167,9 +175,11 @@ projectGetFiles (Project x) = x
 projectSetFiles :: Project -> [SourceFile] -> Project
 projectSetFiles (Project _) x = (Project x)
 
-sessionIsOpeningState :: [SourceFile] -> Bool
-sessionIsOpeningState [sf@(SourceFile _ _ _ Nothing)] = True
-sessionIsOpeningState _ = False
+sessionIsOpeningState :: [SourceFile] -> IO Bool
+sessionIsOpeningState [sf@(SourceFile _ _ e Nothing)] = do
+    b <- scnIsClean e
+    return (b)
+sessionIsOpeningState _ = return (False)
 
 sessionReadSourceFiles :: Session -> IO [SourceFile]
 sessionReadSourceFiles ss = do 
@@ -220,7 +230,8 @@ updateSourceFile ss sf' = do
 readProject :: Session -> IO Project
 readProject ss = atomically $ readTVar $ sessionGetProject ss
 
-
+sourceFileIsSame :: SourceFile -> SourceFile -> Bool
+sourceFileIsSame sf1 sf2 = (sourceFileGetPanelHwnd sf1) == (sourceFileGetPanelHwnd sf2)
 
 
 
