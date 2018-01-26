@@ -119,6 +119,7 @@ setUpMainWindow mf = do
     
     -- setup menu handlers
     set (sessionMenuListGet ss "FileOpen")     [on command := onFileOpen     ss]
+    set (sessionMenuListGet ss "FileNew")      [on command := onFileNew      ss]
     set (sessionMenuListGet ss "FileSave")     [on command := onFileSave     ss]
     set (sessionMenuListGet ss "FileSaveAs")   [on command := onFileSaveAs   ss]
     set (sessionMenuListGet ss "FileSaveAll")  [on command := onFileSaveAll  ss]
@@ -198,7 +199,7 @@ onTabChanged ss ev@(AuiNotebookPageChanged _ _) = do
 onTabClose :: Session -> EventAuiNotebook -> IO ()
 onTabClose ss _ = do
     sf <- enbGetSelectedSourceFile ss
-    closeTabWithPrompt ss sf   
+    closeEditor ss sf   
     updateSaveMenus ss      
     return ()
     
@@ -228,47 +229,76 @@ onFileSaveAll :: Session -> IO ()
 onFileSaveAll ss = do   
     fileSaveAll ss
     return ()
+   
+-- File Open
+onFileOpen :: Session -> IO ()
+onFileOpen ss = do
+    
+    let mf = sessionGetMainFrame ss                     -- wxFD_OPEN wxFD_FILE_MUST_EXIST
+    fd <- fileDialogCreate mf "Open file" "." "" "*.hs" (Point 100 100) 0x11
+    ans <- dialogShowModal fd
+    if ans == wxID_OK
+    then do
+        fp <- fileDialogGetPath fd
+        fileOpen ss fp
+        return ()
+    else
+        return ()
 
+onFileNew :: Session -> IO ()
+onFileNew ss = do
+    editorAddNewFile ss
+    return ()
+        
 -------------------------------------------------
 
-
-closeTabWithPrompt :: Session -> SourceFile -> IO Bool
-closeTabWithPrompt ss sf = do
+closeEditor :: Session -> SourceFile -> IO Bool
+closeEditor ss sf = do
 
     let e = sourceFileGetEditor sf      
     ic <- scnIsClean e
     
     if ic then do
-        closeTab ss sf
-    else do       
+        
+       -- save file
+        b <- fileSave ss sf
+        
+        if b then do
+        
+            closeTab ss sf         
+            return (True)
+
+        -- veto close, don't know how to do this yet ??
+        else return (False)         
+        
+    else do
+    
         -- file is dirty so prompt the user if they want to save it
         enbSelectTab ss sf
         b <- confirmDialog (sessionGetMainFrame ss) 
                 "Heyho" 
                 ("Do you wish to save the file: ?\n" ++ (show $ sourceFileGetFilePathString sf))
                 True
+                
         if b then do
-            closeTab ss sf
-        else do
-            closeTab' ss sf
-            return (True)
-       
-closeTab :: Session -> SourceFile -> IO Bool
-closeTab ss sf = do
-        
-    -- save file
-    b <- fileSave ss sf
-    
-    if b then do
-    
-        closeTab' ss sf         
-        return (True)
+            
+           -- save file
+            b <- fileSave ss sf
+            
+            if b then do
+            
+                closeTab ss sf         
+                return (True)
 
-    -- veto close, don't know how to do this yet ??
-    else return (False) 
+            -- veto close, don't know how to do this yet ??
+            else return (False) 
     
-closeTab' :: Session -> SourceFile -> IO ()
-closeTab' ss sf = do
+        else do
+            closeTab ss sf
+            return (True)
+          
+closeTab :: Session -> SourceFile -> IO ()
+closeTab ss sf = do
     
     -- close down scintilla editor
     let e = sourceFileGetEditor sf
@@ -290,7 +320,7 @@ fileCloseAll ss = do
 fileClose :: Session -> SourceFile -> IO Bool
 fileClose ss sf = do
 
-    b <- closeTabWithPrompt ss sf
+    b <- closeEditor ss sf
     
     if b then do
     
@@ -436,22 +466,7 @@ updateSaveMenus ss = do
             b <- doWhileTrueIO (\sf -> scnIsClean $ sourceFileGetEditor sf) fs
             return (b)
     
--- File Open
-onFileOpen :: Session -> IO ()
-onFileOpen ss = do
-    
-    let mf = sessionGetMainFrame ss                     -- wxFD_OPEN wxFD_FILE_MUST_EXIST
-    fd <- fileDialogCreate mf "Open file" "." "" "*.hs" (Point 100 100) 0x11
-    ans <- dialogShowModal fd
-    if ans == wxID_OK
-    then do
-        fp <- fileDialogGetPath fd
-        fileOpen ss fp
-        return ()
-    else
-        return ()
         
-
 -----------------------------------------------------------------
 -- Session management
 -----------------------------------------------------------------
@@ -579,7 +594,6 @@ editorAddNewFile ss = do
 
     -- update mutable project
     updateProject ss (\pr -> projectSetFiles pr (sf:(projectGetFiles pr)))
-
     
     scnSetSavePoint scn'
     
