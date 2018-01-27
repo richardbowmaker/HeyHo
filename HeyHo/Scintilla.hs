@@ -8,6 +8,7 @@ module Scintilla
     scnNotifyGetWParam,
     scnNotifyGetListCompletionMethod,
     scnGetHwnd,
+    scnSetEventHandler,
     scnEnableEvents,
     scnDisableEvents,
     scnSetText,
@@ -20,7 +21,22 @@ module Scintilla
     scnAppendText,
     scnAppendLine,
     scnIsClean,
-    scnClose
+    scnClose,
+    scnUndo, 
+    scnRedo,
+    scnCanUndo,
+    scnCanRedo,
+    scnBeginUndoAction, 
+    scnEndUndoAction,
+    scnSetUndoCollection,
+    scnGetUndoCollection,
+    scnCut,
+    scnCopy,
+    scnPaste,
+    scnClear,
+    scnCanPaste,
+    scnSelectionIsEmpty,
+    scnSelectAll
 ) where 
     
 import Control.Applicative ((<$>), (<*>))
@@ -56,10 +72,11 @@ import Misc
 type HHOOK = Word64
 
 -- imports from ScintillaProxy.dll
-foreign import ccall safe "ScnNewEditor"     c_ScnNewEditor :: HWND -> IO (HWND)      
-foreign import ccall safe "ScnDestroyEditor" c_ScnDestroyEditor :: HWND -> IO ()      
-foreign import ccall safe "ScnEnableEvents"  c_ScnEnableEvents :: HWND -> FunPtr (Ptr (SCNotification) -> IO ()) -> IO (Int32)
-foreign import ccall safe "ScnDisableEvents" c_ScnDisableEvents :: HWND -> IO ()      
+foreign import ccall safe "ScnNewEditor"        c_ScnNewEditor       :: HWND -> IO (HWND)      
+foreign import ccall safe "ScnDestroyEditor"    c_ScnDestroyEditor   :: HWND -> IO ()      
+foreign import ccall safe "ScnSetEventHandler"  c_ScnSetEventHandler :: HWND -> FunPtr (Ptr (SCNotification) -> IO ()) -> IO ()
+foreign import ccall safe "ScnEnableEvents"     c_ScnEnableEvents    :: HWND -> IO (Int32)
+foreign import ccall safe "ScnDisableEvents"    c_ScnDisableEvents   :: HWND -> IO ()      
 
 -- direct call to Scintilla, different aliases simplify conversion to WPARAM and LPARAM types 
 foreign import ccall safe "ScnSendEditor"    c_ScnSendEditorII :: HWND -> Word32 -> Word64 -> Int64 -> IO (Int64)
@@ -224,19 +241,22 @@ scnCreateEditor parent = do
     hwnd <- c_ScnNewEditor parent
     return (ScnEditor parent hwnd Nothing)
     
-scnEnableEvents :: ScnEditor -> (SCNotification -> IO ()) -> IO (ScnEditor)
-scnEnableEvents (ScnEditor p c _) f = do
-    let s = (ScnEditor p c (Just f))
+scnSetEventHandler :: ScnEditor -> (SCNotification -> IO ()) -> IO (ScnEditor)
+scnSetEventHandler (ScnEditor p c _) eh = do
+    let s = (ScnEditor p c (Just eh))
     cb <- createCallback $ scnCallback s
-    c_ScnEnableEvents c cb    
+    c_ScnSetEventHandler c cb    
     return (s)
 
-scnDisableEvents :: ScnEditor -> IO (ScnEditor)
-scnDisableEvents s@(ScnEditor _ _ Nothing) = return (s)
-scnDisableEvents (ScnEditor p c _) = do
-    let s = (ScnEditor p c Nothing)
+scnEnableEvents :: ScnEditor -> IO ()
+scnEnableEvents (ScnEditor _ c _) = do
+    c_ScnEnableEvents c    
+    return ()
+
+scnDisableEvents :: ScnEditor -> IO ()
+scnDisableEvents s@(ScnEditor _ c _) = do
     c_ScnDisableEvents c    
-    return (s)
+    return ()
 
 -- the callback from ScintillaProxy dll    
 scnCallback :: ScnEditor -> Ptr (SCNotification) -> IO ()
@@ -246,6 +266,10 @@ scnCallback (ScnEditor _ _ (Just f)) p = do
     f n
     return () 
 
+------------------------------------------------------------    
+-- Accessors
+------------------------------------------------------------    
+    
 scnGetHwnd :: ScnEditor -> HWND
 scnGetHwnd (ScnEditor _ h _) = h
 
@@ -312,14 +336,14 @@ scnSetText e bs = do
     return ()
 
 -- get all text from editor    
-scnGetAllText :: ScnEditor -> IO (ByteString)
+scnGetAllText :: ScnEditor -> IO ByteString
 scnGetAllText e = do            
     len <- scnGetTextLen e
     let bs = (BS.replicate (len+1) 0)   -- allocate buffer
     unsafeUseAsCString bs (\cs -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_GETTEXT (fromIntegral (len+1) :: Word64) cs)   
     return (BS.init bs) -- drop the zero byte at the end
     
-scnGetTextLen :: ScnEditor -> IO (Int)
+scnGetTextLen :: ScnEditor -> IO Int
 scnGetTextLen e = do
     len <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETLENGTH 0 0
     return (fromIntegral len :: Int)
@@ -383,4 +407,92 @@ scnIsClean e = do
 scnClose :: ScnEditor -> IO ()
 scnClose e = c_ScnDestroyEditor (scnGetHwnd e)
  
+ 
+----------------------------------------------
+-- Undo and Redo 
+----------------------------------------------
+
+scnUndo :: ScnEditor -> IO ()
+scnUndo e = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_UNDO 0 0
+    return ()
+    
+scnRedo :: ScnEditor -> IO ()
+scnRedo e = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_REDO 0 0
+    return ()
+
+scnCanUndo :: ScnEditor -> IO Bool
+scnCanUndo e = do
+    b <- c_ScnSendEditorII (scnGetHwnd e) sCI_CANUNDO 0 0
+    return (b /= 0)
+
+scnCanRedo :: ScnEditor -> IO Bool
+scnCanRedo e = do
+    b <- c_ScnSendEditorII (scnGetHwnd e) sCI_CANREDO 0 0
+    return (b /= 0)
+
+scnBeginUndoAction :: ScnEditor -> IO ()
+scnBeginUndoAction e = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_BEGINUNDOACTION 0 0
+    return ()
+
+scnEndUndoAction :: ScnEditor -> IO ()
+scnEndUndoAction e = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_ENDUNDOACTION 0 0
+    return ()
+
+scnSetUndoCollection :: ScnEditor -> Bool -> IO ()
+scnSetUndoCollection e b = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_SETUNDOCOLLECTION (fromBool b :: Word64) 0
+    return ()
+
+scnGetUndoCollection :: ScnEditor -> IO Bool
+scnGetUndoCollection e = do
+    b <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETUNDOCOLLECTION 0 0
+    return (b /= 0)
+    
+----------------------------------------------
+-- Cut and Paste 
+----------------------------------------------
+
+scnCut :: ScnEditor -> IO ()
+scnCut e = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_CUT 0 0
+    return ()
+
+scnCopy :: ScnEditor -> IO ()
+scnCopy e = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_COPY 0 0
+    return ()
+    
+scnPaste :: ScnEditor -> IO ()
+scnPaste e = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_PASTE 0 0
+    return ()
+
+scnClear :: ScnEditor -> IO ()
+scnClear e = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_CLEAR 0 0
+    return ()
+
+scnCanPaste :: ScnEditor -> IO Bool
+scnCanPaste e = do
+    b <- c_ScnSendEditorII (scnGetHwnd e) sCI_CANPASTE 0 0
+    return (b /= 0)
+    
+----------------------------------------------
+-- Cut and Paste 
+----------------------------------------------
+    
+scnSelectionIsEmpty :: ScnEditor -> IO Bool
+scnSelectionIsEmpty e = do
+    b <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETSELTEXT  0 0
+    return (b == 1)
+  
+scnSelectAll :: ScnEditor -> IO ()
+scnSelectAll e = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_SELECTALL 0 0
+    return ()
+  
     

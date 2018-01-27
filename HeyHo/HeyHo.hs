@@ -43,7 +43,6 @@ mainGUI = do
         
     return ()
    
-
 ------------------------------------------------------------    
 -- Setup main window, AUI manager its child windows and the menus
 ------------------------------------------------------------    
@@ -93,12 +92,12 @@ setUpMainWindow mf = do
     auiManagerAddPaneByPaneInfo am nb api
     
     -- add floating debug window
-    dp <- panel mf [size := (Size 800 800)]
+    dp <- panel mf [size := (Size 400 400)]
     hwnd <- windowGetHandle dp
     scn <- scnCreateEditor hwnd
     scnConfigureHaskell scn
     scnSetReadOnly scn True
-    
+  
     api <- auiPaneInfoCreateDefault
     auiPaneInfoCaption api "Debug"
     auiPaneInfoFloat api
@@ -106,8 +105,9 @@ setUpMainWindow mf = do
 
     auiManagerAddPaneByPaneInfo am dp api   
 
+    -- update the manager display
     auiManagerUpdate am
- 
+    
     -- setup the menus
     menus <- setupMenus mf 
 
@@ -118,13 +118,20 @@ setUpMainWindow mf = do
     editorAddNewFile ss
     
     -- setup menu handlers
-    set (sessionMenuListGet ss "FileOpen")     [on command := onFileOpen     ss]
-    set (sessionMenuListGet ss "FileNew")      [on command := onFileNew      ss]
-    set (sessionMenuListGet ss "FileSave")     [on command := onFileSave     ss]
-    set (sessionMenuListGet ss "FileSaveAs")   [on command := onFileSaveAs   ss]
-    set (sessionMenuListGet ss "FileSaveAll")  [on command := onFileSaveAll  ss]
-    set (sessionMenuListGet ss "FileClose")    [on command := onFileClose    ss]
-    set (sessionMenuListGet ss "FileCloseAll") [on command := onFileCloseAll ss]
+    set (sessionMenuListGet ss "FileOpen")     [on command := onFileOpen      ss]
+    set (sessionMenuListGet ss "FileNew")      [on command := onFileNew       ss]
+    set (sessionMenuListGet ss "FileSave")     [on command := onFileSave      ss]
+    set (sessionMenuListGet ss "FileSaveAs")   [on command := onFileSaveAs    ss]
+    set (sessionMenuListGet ss "FileSaveAll")  [on command := onFileSaveAll   ss]
+    set (sessionMenuListGet ss "FileClose")    [on command := onFileClose     ss]
+    set (sessionMenuListGet ss "FileCloseAll") [on command := onFileCloseAll  ss]
+    set (sessionMenuListGet ss "EditUndo")     [on command := onEditUndo      ss]
+    set (sessionMenuListGet ss "EditRedo")     [on command := onEditRedo      ss]
+    set (sessionMenuListGet ss "EditCut")      [on command := onEditCut       ss]
+    set (sessionMenuListGet ss "EditCopy")     [on command := onEditCopy      ss]
+    set (sessionMenuListGet ss "EditPaste")    [on command := onEditPaste     ss]
+    set (sessionMenuListGet ss "EditAll")      [on command := onEditSelectAll ss]
+    set (sessionMenuListGet ss "TestTest")     [on command := onTestTest      ss]
     
     set enb [on auiNotebookOnPageCloseEvent   := onTabClose   ss]
     set enb [on auiNotebookOnPageChangedEvent := onTabChanged ss]
@@ -154,6 +161,12 @@ setupMenus mf  = do
 
     menuEdit         <- menuPane            [text := "&Edit"]
     menuEditUndo     <- menuItem menuEdit   [text := "Undo\tCtrl-Z"]
+    menuEditRedo     <- menuItem menuEdit   [text := "Redo\tCtrl-Y"]
+    menuAppendSeparator menuEdit
+    menuEditCut      <- menuItem menuEdit   [text := "Cut\tCtrl-X"]
+    menuEditCopy     <- menuItem menuEdit   [text := "Copy\tCtrl-C"]
+    menuEditPaste    <- menuItem menuEdit   [text := "Paste\tCtrl-V"]
+    menuEditAll      <- menuItem menuEdit   [text := "Select All\tCtrl-A"]
     
     menuBuild        <- menuPane            [text := "Build"]
     menuBuildCompile <- menuItem menuBuild  [text := "Compile\tCtrl-F7",       help := "Compiles current source file"]
@@ -161,11 +174,14 @@ setupMenus mf  = do
     menuBuildReBuild <- menuItem menuBuild  [text := "Rebuild\tCtrl-Alt-F7",   help := "Rebuild the project"]
     menuBuildClean   <- menuItem menuBuild  [text := "Clean",                  help := "Clean the project"]
           
+    menuTest         <- menuPane            [text := "Test"]
+    menuTestTest     <- menuItem menuTest   [text := "Test\tCtrl-T"]
+
     -- create Help menu
     menuHelp'        <- menuHelp []
     menuHelpAbout    <- menuAbout menuHelp' [help := "About HeyHo", on command := infoDialog mf "About HeyHo" "mmmmm !"]
       
-    set mf [ menuBar := [menuFile, menuEdit, menuBuild, menuHelp']]
+    set mf [ menuBar := [menuFile, menuEdit, menuBuild, menuTest, menuHelp']]
 
     -- create lookup list of menus for session data   
     ml <- sessionMenuListCreate [   ("FileOpen",        menuFileOpen), 
@@ -174,12 +190,19 @@ setupMenus mf  = do
                                     ("FileClose",       menuFileClose), 
                                     ("FileCloseAll",    menuFileCloseAll), 
                                     ("FileSaveAs",      menuFileSaveAs), 
-                                    ("FileSaveAll",     menuFileSaveAll)] 
+                                    ("FileSaveAll",     menuFileSaveAll),
+                                    ("EditUndo",        menuEditUndo),
+                                    ("EditRedo",        menuEditRedo),
+                                    ("EditCut",         menuEditCut),
+                                    ("EditCopy",        menuEditCopy),
+                                    ("EditPaste",       menuEditPaste),
+                                    ("EditAll",         menuEditAll),
+                                    ("TestTest",        menuTestTest)]
 
     return (ml)
     
 ------------------------------------------------------------    
--- Event handlers
+-- File Menu handlers
 ------------------------------------------------------------    
 
 onClosing :: Session -> IO ()
@@ -194,6 +217,7 @@ onClosing ss = do
 onTabChanged :: Session -> EventAuiNotebook -> IO ()
 onTabChanged ss ev@(AuiNotebookPageChanged _ _) = do
     updateSaveMenus ss
+    updateEditMenus ss
     return ()    
 
 onTabClose :: Session -> EventAuiNotebook -> IO ()
@@ -201,6 +225,7 @@ onTabClose ss _ = do
     sf <- enbGetSelectedSourceFile ss
     closeEditor ss sf   
     updateSaveMenus ss      
+    updateEditMenus ss
     return ()
     
 onFileClose :: Session -> IO ()
@@ -208,6 +233,7 @@ onFileClose ss = do
     sf <- enbGetSelectedSourceFile ss
     fileClose ss sf
     updateSaveMenus ss    
+    updateEditMenus ss
     return ()
   
 onFileCloseAll :: Session -> IO ()
@@ -217,17 +243,23 @@ onFileSave :: Session -> IO ()
 onFileSave ss = do
     sf <- enbGetSelectedSourceFile ss
     fileSave ss sf
+    updateSaveMenus ss    
+    updateEditMenus ss
     return ()
 
 onFileSaveAs :: Session -> IO ()
 onFileSaveAs ss = do
     sf <- enbGetSelectedSourceFile ss
     fileSaveAs ss sf
+    updateSaveMenus ss    
+    updateEditMenus ss
     return ()
     
 onFileSaveAll :: Session -> IO ()    
 onFileSaveAll ss = do   
     fileSaveAll ss
+    updateSaveMenus ss    
+    updateEditMenus ss
     return ()
    
 -- File Open
@@ -241,15 +273,67 @@ onFileOpen ss = do
     then do
         fp <- fileDialogGetPath fd
         fileOpen ss fp
+        updateSaveMenus ss    
+        updateEditMenus ss        
         return ()
     else
         return ()
 
 onFileNew :: Session -> IO ()
 onFileNew ss = do
-    editorAddNewFile ss
+    sf <- editorAddNewFile ss
+    enbSelectTab ss sf
+    updateSaveMenus ss    
+    updateEditMenus ss    
     return ()
-        
+ 
+------------------------------------------------------------    
+-- Edit Menu handlers
+------------------------------------------------------------    
+
+onEditUndo :: Session -> IO ()
+onEditUndo ss = do
+    sf <- enbGetSelectedSourceFile ss
+    scnUndo $ sourceFileGetEditor sf
+    return ()
+
+onEditRedo :: Session -> IO ()
+onEditRedo ss = do
+    sf <- enbGetSelectedSourceFile ss
+    scnRedo $ sourceFileGetEditor sf
+    return ()
+ 
+onEditCut :: Session -> IO ()
+onEditCut ss = do
+    sf <- enbGetSelectedSourceFile ss
+    scnCut $ sourceFileGetEditor sf
+    return ()
+
+onEditCopy :: Session -> IO ()
+onEditCopy ss = do
+    sf <- enbGetSelectedSourceFile ss
+    scnCopy $ sourceFileGetEditor sf
+    return ()
+    
+onEditPaste :: Session -> IO ()
+onEditPaste ss = do
+    sf <- enbGetSelectedSourceFile ss
+    scnPaste $ sourceFileGetEditor sf
+    return ()
+  
+onEditSelectAll :: Session -> IO ()
+onEditSelectAll ss = do
+    sf <- enbGetSelectedSourceFile ss
+    scnSelectAll $ sourceFileGetEditor sf
+    return ()
+  
+onTestTest :: Session -> IO ()
+onTestTest ss = do
+    sf <- enbGetSelectedSourceFile ss
+    b <- scnSelectionIsEmpty $ sourceFileGetEditor sf
+    debugOut ss $ "Selection: " ++ show b
+    return ()
+
 -------------------------------------------------
 
 closeEditor :: Session -> SourceFile -> IO Bool
@@ -315,6 +399,7 @@ fileCloseAll ss = do
     sfs <- sessionReadSourceFiles ss  
     doWhileTrueIO (fileClose ss) sfs
     updateSaveMenus ss    
+    updateEditMenus ss
     return ()
        
 fileClose :: Session -> SourceFile -> IO Bool
@@ -415,7 +500,9 @@ writeSourceFile sf = do
             -- bug, shouldn't end up here
             return ()
             
------------------------    
+-----------------------------------------------------------------
+-- Scintilla callback
+-----------------------------------------------------------------
 
 scnCallback :: Session -> SCNotification -> IO ()
 scnCallback ss sn = do 
@@ -427,15 +514,25 @@ scnCallback ss sn = do
     
         2002 -> do -- sCN_SAVEPOINTREACHED
             updateSaveMenus ss
+            updateEditMenus ss
             return ()
 
         2003 -> do -- sCN_SAVEPOINTLEFT
             updateSaveMenus ss
+            updateEditMenus ss
+            return ()
+            
+        2007 -> do -- sCN_UPDATEUI
+            updateEditMenus ss
             return ()
           
         otherwise -> return ()
-          
+         
 
+-----------------------------------------------------------------
+-- Update menu status
+-----------------------------------------------------------------
+         
 -- updates the enabled state of the Save, SaveAs and SaveAll menus                                
 updateSaveMenus :: Session -> IO ()   
 updateSaveMenus ss = do
@@ -466,7 +563,42 @@ updateSaveMenus ss = do
             b <- doWhileTrueIO (\sf -> scnIsClean $ sourceFileGetEditor sf) fs
             return (b)
     
+-- updates the enabled state of the Save, SaveAs and SaveAll menus                                
+updateEditMenus :: Session -> IO ()   
+updateEditMenus ss = do
+ 
+    fs <- sessionReadSourceFiles ss
         
+    if (length fs > 0) then do
+    
+        sf <- enbGetSelectedSourceFile ss
+        b <- scnSelectionIsEmpty $ sourceFileGetEditor sf    
+        debugOut ss $ "updateEditMenus: " ++ (show b) ++ " " ++ (sourceFileToString sf)
+        
+        b <- scnCanUndo $ sourceFileGetEditor sf
+        set (sessionMenuListGet ss "EditUndo")    [enabled := b]
+        b <- scnCanRedo $ sourceFileGetEditor sf
+        set (sessionMenuListGet ss "EditRedo")    [enabled := b]
+        
+        b <- scnSelectionIsEmpty $ sourceFileGetEditor sf        
+        set (sessionMenuListGet ss "EditCut")     [enabled := not b]
+        set (sessionMenuListGet ss "EditCopy")    [enabled := not b]        
+        b <- scnCanPaste $ sourceFileGetEditor sf        
+        set (sessionMenuListGet ss "EditPaste")   [enabled := b]
+        set (sessionMenuListGet ss "EditAll")     [enabled := True]
+        return ()
+        
+    else do
+    
+        debugOut ss "updateEditMenus: no file"
+        set (sessionMenuListGet ss "EditUndo")    [enabled := False]
+        set (sessionMenuListGet ss "EditRedo")    [enabled := False]
+        set (sessionMenuListGet ss "EditCut")     [enabled := False]
+        set (sessionMenuListGet ss "EditCopy")    [enabled := False]
+        set (sessionMenuListGet ss "EditPaste")   [enabled := False]
+        set (sessionMenuListGet ss "EditAll")     [enabled := False]
+        return ()
+               
 -----------------------------------------------------------------
 -- Session management
 -----------------------------------------------------------------
@@ -542,8 +674,9 @@ openSourceFileEditor ss fp = do
     hwnd <- windowGetHandle p
     scn <- scnCreateEditor hwnd
     scnConfigureHaskell scn
-    scn' <- scnEnableEvents scn (scnCallback ss)
-
+    scn' <- scnSetEventHandler scn (scnCallback ss)
+    scnEnableEvents scn'
+    
     -- add panel to notebook
     auiNotebookAddPage nb p (takeFileName fp) False 0
     ta <- auiSimpleTabArtCreate
@@ -590,7 +723,8 @@ editorAddNewFile ss = do
     sf <- createSourceFile p scn Nothing
 
     -- enable events
-    scn' <- scnEnableEvents scn (scnCallback ss)
+    scn' <- scnSetEventHandler scn (scnCallback ss)
+    scnEnableEvents scn'
 
     -- update mutable project
     updateProject ss (\pr -> projectSetFiles pr (sf:(projectGetFiles pr)))
