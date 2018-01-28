@@ -36,7 +36,12 @@ module Scintilla
     scnClear,
     scnCanPaste,
     scnSelectionIsEmpty,
-    scnSelectAll
+    scnSelectAll,
+    scnBraceHighlight,
+    scnBraceBadLight,
+    scnBraceMatch,
+    scnGetCurrentPos,
+    scnGetCharAt
 ) where 
     
 import Control.Applicative ((<$>), (<*>))
@@ -62,6 +67,7 @@ import Numeric (showHex)
 -- project imports
 import ScintillaConstants
 import Misc
+
 
  
 
@@ -257,14 +263,28 @@ scnDisableEvents :: ScnEditor -> IO ()
 scnDisableEvents s@(ScnEditor _ c _) = do
     c_ScnDisableEvents c    
     return ()
+   
+---------------------------------------------    
+-- Callback from ScintillaProxy dll    
+---------------------------------------------    
 
--- the callback from ScintillaProxy dll    
 scnCallback :: ScnEditor -> Ptr (SCNotification) -> IO ()
 scnCallback (ScnEditor _ _ Nothing) _ = return ()
-scnCallback (ScnEditor _ _ (Just f)) p = do
-    n <- peek p
-    f n
-    return () 
+scnCallback e@(ScnEditor _ _ (Just f)) p = do
+
+    sn <- peek p
+    
+    case (scnNotifyGetCode sn) of
+                    
+        2007 -> do -- sCN_UPDATEUI
+            f sn            
+            scnUpdateBraces e
+            return ()
+        
+        otherwise -> do
+--            debugOut ss $ "Event: " ++ (show $ scnNotifyGetCode sn)
+            f sn            
+            return ()    
 
 ------------------------------------------------------------    
 -- Accessors
@@ -305,7 +325,13 @@ scnDarkGreen :: COLORREF
 scnDarkGreen = (rgb 0 0x80 0)
 
 scnKeyBlue :: COLORREF
-scnKeyBlue = (rgb 0x20 0x50 0xf0)
+scnKeyBlue = (rgb 0 0 230)
+
+scnBraceGood :: COLORREF
+scnBraceGood = (rgb 255 0 0)
+
+scnBraceBad :: COLORREF
+scnBraceBad = (rgb 150 0 150)
 
 scnStringBrown :: COLORREF
 scnStringBrown = (rgb 0xA0 0x10 0x20)
@@ -314,8 +340,8 @@ scnStringBrown = (rgb 0xA0 0x10 0x20)
 scnConfigureHaskell :: ScnEditor -> IO ()
 scnConfigureHaskell e = do
     scnSetLexer e (fromIntegral sCLEX_HASKELL :: Int)
-    scnSetKeywords e 0 ["do", "if", "then", "else", "case", "qualified", "return", "case", 
-                        "ccall", "safe", "unsafe", "import", "data", "deriving", "where"]
+    scnSetKeywords e 0 ["do", "if", "then", "else", "case", "qualified", "case", "module", 
+                        "ccall", "safe", "unsafe", "import", "data", "deriving", "where", "as"]
     scnSetAStyle e (fromIntegral sTYLE_DEFAULT :: Word64) scnBlack scnWhite 9 "Courier New"
     scnStyleClearAll e
     scnSetAStyle e (fromIntegral sCE_H_DEFAULT :: Word64) scnBlack scnWhite 9 "Courier New"
@@ -326,27 +352,11 @@ scnConfigureHaskell e = do
     scnSetStyleColour e sCE_HA_COMMENTBLOCK  scnDarkGreen   scnWhite    
     scnSetStyleColour e sCE_HA_COMMENTBLOCK2 scnDarkGreen   scnWhite
     scnSetStyleColour e sCE_HA_COMMENTBLOCK3 scnDarkGreen   scnWhite
+    scnSetStyleColour e (fromIntegral sTYLE_BRACELIGHT :: Word64) scnBraceGood scnWhite
+    scnSetStyleColour e (fromIntegral sTYLE_BRACEBAD :: Word64)   scnBraceBad  scnWhite
+    
     return ()
     
--- set the entire content of the editor    
-scnSetText :: ScnEditor -> ByteString -> IO ()
-scnSetText e bs = do
-    let bs0 = BS.append bs (BS.replicate 1 0) -- add terminating null 
-    unsafeUseAsCString bs0 (\cs -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_SETTEXT 0 cs)
-    return ()
-
--- get all text from editor    
-scnGetAllText :: ScnEditor -> IO ByteString
-scnGetAllText e = do            
-    len <- scnGetTextLen e
-    let bs = (BS.replicate (len+1) 0)   -- allocate buffer
-    unsafeUseAsCString bs (\cs -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_GETTEXT (fromIntegral (len+1) :: Word64) cs)   
-    return (BS.init bs) -- drop the zero byte at the end
-    
-scnGetTextLen :: ScnEditor -> IO Int
-scnGetTextLen e = do
-    len <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETLENGTH 0 0
-    return (fromIntegral len :: Int)
 
 scnSetLexer :: ScnEditor -> Int -> IO ()
 scnSetLexer e s = do               
@@ -390,15 +400,7 @@ scnSetReadOnly :: ScnEditor -> Bool -> IO ()
 scnSetReadOnly e b = do
     c_ScnSendEditorII (scnGetHwnd e) sCI_SETREADONLY (fromBool b :: Word64) 0
     return ()
-    
-scnAppendText :: ScnEditor -> String -> IO ()
-scnAppendText e s = do
-    withCStringLen s (\(cs, l) -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_APPENDTEXT (fromIntegral l :: Word64) cs)
-    return ()
-    
-scnAppendLine :: ScnEditor -> String -> IO ()
-scnAppendLine scn s = scnAppendText scn (s ++ "\n")
-  
+      
 scnIsClean :: ScnEditor -> IO Bool
 scnIsClean e = do
     x <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETMODIFY  0 0
@@ -482,7 +484,7 @@ scnCanPaste e = do
     return (b /= 0)
     
 ----------------------------------------------
--- Cut and Paste 
+-- Selection 
 ----------------------------------------------
     
 scnSelectionIsEmpty :: ScnEditor -> IO Bool
@@ -495,4 +497,85 @@ scnSelectAll e = do
     c_ScnSendEditorII (scnGetHwnd e) sCI_SELECTALL 0 0
     return ()
   
+----------------------------------------------
+-- Brace Highlighting 
+----------------------------------------------
+  
+scnBraceHighlight :: ScnEditor -> Int -> Int -> IO ()
+scnBraceHighlight e pa pb = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_BRACEHIGHLIGHT (fromIntegral pa :: Word64) (fromIntegral pb :: Int64)
+    return ()
+
+scnBraceBadLight :: ScnEditor -> Int -> IO ()
+scnBraceBadLight e p = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_BRACEBADLIGHT (fromIntegral p :: Word64) 0
+    return ()
+
+scnBraceMatch :: ScnEditor -> Int -> IO Int
+scnBraceMatch e p = do
+    p' <- c_ScnSendEditorII (scnGetHwnd e) sCI_BRACEMATCH  (fromIntegral p :: Word64) 0
+    return (fromIntegral p' :: Int)
     
+scnUpdateBraces :: ScnEditor -> IO ()
+scnUpdateBraces e = do
+    
+    -- look at position ahead and behind the cursor
+    -- (scintilla seems to tolerate positions out of range)
+    pa <- scnGetCurrentPos e
+    let pss = [pa-1, pa]
+
+    -- find the matching braces for both positions
+    pes <- mapM (scnBraceMatch e) pss
+    
+    -- (de)highlight in preference the brackets behind the cursor
+    -- otherwise the brackets ahead of the cursor
+    highlight pss pes
+          
+    where 
+        highlight _ [-1, -1] = scnBraceHighlight e (-1) (-1) -- dehighlight    
+        highlight [psb, psa] [peb, pea] 
+            | peb /= -1 = scnBraceHighlight e psb peb
+            | otherwise = scnBraceHighlight e psa pea 
+        
+----------------------------------------------
+-- Text Get and Set 
+----------------------------------------------
+
+-- set the entire content of the editor    
+scnSetText :: ScnEditor -> ByteString -> IO ()
+scnSetText e bs = do
+    let bs0 = BS.append bs (BS.replicate 1 0) -- add terminating null 
+    unsafeUseAsCString bs0 (\cs -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_SETTEXT 0 cs)
+    return ()
+
+-- get all text from editor    
+scnGetAllText :: ScnEditor -> IO ByteString
+scnGetAllText e = do            
+    len <- scnGetTextLen e
+    let bs = (BS.replicate (len+1) 0)   -- allocate buffer
+    unsafeUseAsCString bs (\cs -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_GETTEXT (fromIntegral (len+1) :: Word64) cs)   
+    return (BS.init bs) -- drop the zero byte at the end
+    
+scnGetTextLen :: ScnEditor -> IO Int
+scnGetTextLen e = do
+    len <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETLENGTH 0 0
+    return (fromIntegral len :: Int)
+   
+scnAppendText :: ScnEditor -> String -> IO ()
+scnAppendText e s = do
+    withCStringLen s (\(cs, l) -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_APPENDTEXT (fromIntegral l :: Word64) cs)
+    return ()
+    
+scnAppendLine :: ScnEditor -> String -> IO ()
+scnAppendLine scn s = scnAppendText scn (s ++ "\n")
+    
+scnGetCurrentPos :: ScnEditor -> IO Int
+scnGetCurrentPos e = do
+    p <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETCURRENTPOS 0 0
+    return (fromIntegral p :: Int)
+
+scnGetCharAt :: ScnEditor -> Int -> IO Char
+scnGetCharAt e p = do
+    c <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETCHARAT (fromIntegral p :: Word64) 0
+    return (toEnum (fromIntegral c :: Int) :: Char)
+

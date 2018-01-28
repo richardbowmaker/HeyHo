@@ -30,14 +30,14 @@ mainGUI = do
     mf <- frame []    
     set mf [ text := "HeyHo", size := (Size 1300 800)]  
      
-    -- AUI manager and child windows
-    ss <- setUpMainWindow mf
-    
      -- create statusbar field
-    statusBar' <- statusField   [text := "Welcome to wxHaskell"]
+    sf <- statusField []
 
+    -- AUI manager and child windows
+    ss <- setUpMainWindow mf sb
+    
     -- set the statusbar and menubar
-    set mf [ statusBar := [statusBar']]
+    set mf [statusBar := [sf]]
 
     set mf [on closing := onClosing ss]
         
@@ -47,8 +47,8 @@ mainGUI = do
 -- Setup main window, AUI manager its child windows and the menus
 ------------------------------------------------------------    
    
-setUpMainWindow :: Frame () -> IO (Session)    
-setUpMainWindow mf = do 
+setUpMainWindow :: Frame () -> StatusBar () -> IO (Session)    
+setUpMainWindow mf sb = do 
 
     am <- auiManagerCreate mf wxAUI_MGR_DEFAULT
       
@@ -112,7 +112,7 @@ setUpMainWindow mf = do
     menus <- setupMenus mf 
 
     -- create the session data
-    ss <- createSession mf am enb (createProject []) menus scn
+    ss <- createSession mf am enb (createProject []) menus sb scn
     
     -- add blank file to editor
     editorAddNewFile ss
@@ -137,7 +137,7 @@ setUpMainWindow mf = do
     set enb [on auiNotebookOnPageChangedEvent := onTabChanged ss]
    
     return (ss)
-    
+  
 ------------------------------------------------------------    
 -- Setup menus
 ------------------------------------------------------------    
@@ -507,8 +507,9 @@ writeSourceFile sf = do
 scnCallback :: Session -> SCNotification -> IO ()
 scnCallback ss sn = do 
 
+
     case (scnNotifyGetCode sn) of
-    
+        
     -- If the constants are used rather than the real values the compiler
     -- gives some nonsense about overlapping cases !! compiler bug
     
@@ -525,8 +526,12 @@ scnCallback ss sn = do
         2007 -> do -- sCN_UPDATEUI
             updateEditMenus ss
             return ()
+        
+        2013 -> return () -- sCN_PAINTED
           
-        otherwise -> return ()
+        otherwise -> do
+            debugOut ss $ "Event: " ++ (show $ scnNotifyGetCode sn)
+            return ()
          
 
 -----------------------------------------------------------------
@@ -573,7 +578,7 @@ updateEditMenus ss = do
     
         sf <- enbGetSelectedSourceFile ss
         b <- scnSelectionIsEmpty $ sourceFileGetEditor sf    
-        debugOut ss $ "updateEditMenus: " ++ (show b) ++ " " ++ (sourceFileToString sf)
+--        debugOut ss $ "updateEditMenus: " ++ (show b) ++ " " ++ (sourceFileToString sf)
         
         b <- scnCanUndo $ sourceFileGetEditor sf
         set (sessionMenuListGet ss "EditUndo")    [enabled := b]
@@ -692,7 +697,6 @@ openSourceFileEditor ss fp = do
 
     return (sf) 
   
-
 ------------------------------------------------------------    
 -- Create the source file editor notebook
 ------------------------------------------------------------    

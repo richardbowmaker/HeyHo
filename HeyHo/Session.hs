@@ -62,6 +62,7 @@ data Session = Session {    mainFrame   :: Frame (),            -- Main window
                             editorNB    :: AuiNotebook (),      -- Notebook of source file editors
                             project     :: TProject,            -- Project data (mutable)
                             menus       :: SessionMenuList,
+                            status      :: StatusBar(),
                             debug       :: ScnEditor}
                                                         
  -- project data is mutable
@@ -80,27 +81,27 @@ type SessionMenuList = [SessionNameMenuPair]
 
                         
 sessionGetMainFrame :: Session -> Frame ()
-sessionGetMainFrame (Session x _ _ _ _ _) = x
+sessionGetMainFrame (Session x _ _ _ _ _ _) = x
  
 sessionGetAuiManager :: Session -> AuiManager ()
-sessionGetAuiManager (Session _ x _ _ _ _) = x
+sessionGetAuiManager (Session _ x _ _ _ _ _) = x
  
 sessionGetNotebook :: Session -> AuiNotebook ()
-sessionGetNotebook (Session _ _ x _ _ _) = x
+sessionGetNotebook (Session _ _ x _ _ _ _) = x
 
 sessionGetProject :: Session -> TProject
-sessionGetProject (Session _ _ _ x _ _) = x
+sessionGetProject (Session _ _ _ x _ _ _) = x
 
 sessionGetMenus :: Session -> SessionMenuList
-sessionGetMenus (Session _ _ _ _ x _) = x
+sessionGetMenus (Session _ _ _ _ x _ _) = x
 
 sessionGetDebug :: Session -> ScnEditor
-sessionGetDebug (Session _ _ _ _ _ x) = x
+sessionGetDebug (Session _ _ _ _ _ _ x) = x
 
-createSession :: Frame () -> AuiManager () -> AuiNotebook () -> Project -> SessionMenuList -> ScnEditor -> IO (Session)
-createSession mf am nb pr ms db = do 
+createSession :: Frame () -> AuiManager () -> AuiNotebook () -> Project -> SessionMenuList -> StatusBar() -> ScnEditor -> IO (Session)
+createSession mf am nb pr ms sb db = do 
     tpr <- atomically $ newTVar (createProject [])
-    return (Session mf am nb tpr ms db)
+    return (Session mf am nb tpr ms sb db)
 
 --------------------    
 

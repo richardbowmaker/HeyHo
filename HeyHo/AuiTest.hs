@@ -5,6 +5,7 @@ import Graphics.UI.WXCore
 import Graphics.UI.WX.Events
 
 
+
 main = start mainGUI
 
 mainGUI :: IO ()
@@ -113,6 +114,29 @@ mainGUI = do
     menuBarAppend mbar menuFile "&File"
     
     frameSetMenuBar f mbar
+    
+   
+    tb <- auiToolBarCreate f idAny (Point (-1) (-1)) (Size (-1) (-1)) $ wxAUI_TB_DEFAULT_STYLE + wxAUI_TB_OVERFLOW + wxAUI_TB_HORIZONTAL
+--    auiToolBarSetToolBitmapSize tb (Size 16 16)
+
+    let save = bitmap  "save.png"
+    let burning = bitmap  "burning.ico"
+    
+--    set save [size := (Size 16 16)]
+    
+    auiToolBarAddTool tb 101 "Save" save burning wxITEM_NORMAL "help short" "help long" f
+    
+ 
+    api <- auiPaneInfoCreateDefault
+    auiPaneInfoCaption api "Toolbar  1"
+    auiPaneInfoToolbarPane api
+    auiPaneInfoTop api 
+    auiPaneInfoLayer api 1
+    auiPaneInfoPosition api 1
+
+    auiManagerAddPaneByPaneInfo auiMgr tb api
+    
+    
  
     auiManagerUpdate auiMgr
 
@@ -133,7 +157,7 @@ onClosing f aui = do
     
 pageClose :: Frame () -> EventAuiNotebook -> IO ()
 pageClose f ev@(AuiNotebookPageClose _ _) = do
-    auiManagerEventVeto ev True
+--    auiManagerEventVeto ev True
     set f [ text := "Page Closed" ]
     return ()    
 
