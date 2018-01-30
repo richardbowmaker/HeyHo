@@ -14,7 +14,7 @@ import Session
 
 debugOut :: Session -> String -> IO ()
 debugOut ss s = do
-    let e = sessionGetDebug ss
+    let e = ssDebug ss
     scnSetReadOnly e False
     scnAppendLine e s
     scnSetReadOnly e True

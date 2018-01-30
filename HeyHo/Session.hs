@@ -3,42 +3,46 @@ module Session
     Session,
     Project,
     SourceFile,
-    sourceFileToString,
-    sessionToString,
-    projectToString,
-    updateProject,
-    readProject,
-    createSession,
-    sessionGetMainFrame,
-    sessionGetAuiManager, 
-    sessionGetNotebook,
-    sessionGetProject,
-    sessionGetStatus,
-    sessionGetDebug,
-    SessionNameMenuPair,
-    SessionMenuList,
-    sessionGetMenus,
-    sessionMenuListNew,
-    sessionMenuListCreate,
-    sessionMenuListAdd,
-    sessionMenuListGet,
-    createSourceFile,
-    sourceFileSetFilePath,
+--
+    ssCreate,
+    ssFrame,
+    ssAuiMgr,
+    ssEditors,
+    ssProject,
+    ssMenus,
+    ssStatus,
+    ssDebug,
+    ssMenuListNew,
+    ssMenuListCreate,
+    ssMenuListAdd,
+    ssMenuListGet,
+    ssReadSourceFiles,
+    ssIsOpeningState,
+    ssToString,    
+    SsMenuList,
+    SsNameMenuPair,
+--
+    sfCreate,
+    sfSetFilePath,
     sfPanel,
     sfPanelHwnd,
     sfEditor,
     sfFilePath,
-    sourceFileGetFilePathString,
-    sourceFileMatchesHwnd,
-    projectGetFiles,
-    projectSetFiles,
-    createProject,
-    sessionReadSourceFiles,
-    sessionIsOpeningState,
-    isSourceFileInList,
-    sourceFilePathIs,
-    updateSourceFile,
-    sourceFileIsSame
+    sfFilePathString,
+    sfIsInList,
+    sfPathIs,
+    sfUpdate,
+    sfIsSame,    
+    sfMatchesHwnd,
+    sfToString,    
+--
+    prFiles,
+    prSetFiles,
+    prCreate,
+    prToString,
+    prUpdate,
+    prRead
+    
 ) where
 
 
@@ -58,185 +62,152 @@ import Misc
 -- Session data and ToString functions
 ----------------------------------------------------------
 
-data Session = Session {    mainFrame   :: Frame (),            -- Main window
-                            auiMgr      :: AuiManager (),       -- Application level AUI manager
-                            editorNB    :: AuiNotebook (),      -- Notebook of source file editors
-                            project     :: TProject,            -- Project data (mutable)
-                            menus       :: SessionMenuList,
-                            status      :: StatusField,
-                            debug       :: ScnEditor}
+data Session = Session {    ssFrame   :: Frame (),            -- Main window
+                            ssAuiMgr  :: AuiManager (),       -- Application level AUI manager
+                            ssEditors :: AuiNotebook (),      -- Notebook of source file editors
+                            ssProject :: TProject,            -- Project data (mutable)
+                            ssMenus   :: SsMenuList,
+                            ssStatus  :: StatusField,
+                            ssDebug   :: ScnEditor}
                                                         
  -- project data is mutable
 type TProject = TVar Project
 
-data Project = Project { files :: [SourceFile] }
+data Project = Project { prFiles :: [SourceFile] }
 
 -- Session data
 data SourceFile = SourceFile {  sfPanel     :: Panel (),        -- The panel added to the AuiNotebookManager
                                 sfPanelHwnd :: Word64,          -- HWND of panel
                                 sfEditor    :: ScnEditor,       -- The Scintilla editor, child window of panel
-                                sfFilePath    :: Maybe String}    -- Source file path, Nothing = file name not set yet
+                                sfFilePath  :: Maybe String}    -- Source file path, Nothing = file name not set yet
 
-type SessionNameMenuPair = (String, MenuItem ())                               
-type SessionMenuList = [SessionNameMenuPair]
+type SsNameMenuPair = (String, MenuItem ())                               
+type SsMenuList = [SsNameMenuPair]
 
                         
-sessionGetMainFrame :: Session -> Frame ()
-sessionGetMainFrame (Session x _ _ _ _ _ _) = x
- 
-sessionGetAuiManager :: Session -> AuiManager ()
-sessionGetAuiManager (Session _ x _ _ _ _ _) = x
- 
-sessionGetNotebook :: Session -> AuiNotebook ()
-sessionGetNotebook (Session _ _ x _ _ _ _) = x
+----------------------------------------------------------------
+-- Session  helpers
+----------------------------------------------------------------
 
-sessionGetProject :: Session -> TProject
-sessionGetProject (Session _ _ _ x _ _ _) = x
-
-sessionGetMenus :: Session -> SessionMenuList
-sessionGetMenus (Session _ _ _ _ x _ _) = x
-
-sessionGetStatus :: Session -> StatusField
-sessionGetStatus (Session _ _ _ _ _ x _) = x
-
-sessionGetDebug :: Session -> ScnEditor
-sessionGetDebug (Session _ _ _ _ _ _ x) = x
-
-createSession :: Frame () -> AuiManager () -> AuiNotebook () -> Project -> SessionMenuList -> StatusField -> ScnEditor -> IO (Session)
-createSession mf am nb pr ms sf db = do 
-    tpr <- atomically $ newTVar (createProject [])
+ssCreate :: Frame () -> AuiManager () -> AuiNotebook () -> Project -> SsMenuList -> StatusField -> ScnEditor -> IO (Session)
+ssCreate mf am nb pr ms sf db = do 
+    tpr <- atomically $ newTVar (prCreate [])
     return (Session mf am nb tpr ms sf db)
-
---------------------    
 
 -- creates a new menu item lookup list
 -- a dummy entry is provided for failed lookups to simplfy client calls to menuListGet 
-sessionMenuListNew :: IO SessionMenuList 
-sessionMenuListNew = do
+ssMenuListNew :: IO SsMenuList 
+ssMenuListNew = do
     mi <- menuItemCreate
     return ([("", mi)])
 
-sessionMenuListCreate :: [SessionNameMenuPair] -> IO SessionMenuList
-sessionMenuListCreate nmps = do
-    ml <- sessionMenuListNew
-    return (sessionMenuListAdd nmps ml)
+ssMenuListCreate :: [SsNameMenuPair] -> IO SsMenuList
+ssMenuListCreate nmps = do
+    ml <- ssMenuListNew
+    return (ssMenuListAdd nmps ml)
 
-sessionMenuListAdd :: [SessionNameMenuPair] -> SessionMenuList -> SessionMenuList
-sessionMenuListAdd nmps ml = ml ++ nmps
+ssMenuListAdd :: [SsNameMenuPair] -> SsMenuList -> SsMenuList
+ssMenuListAdd nmps ml = ml ++ nmps
 
-sessionMenuListGet :: Session -> String -> MenuItem ()
-sessionMenuListGet ss s = 
+ssMenuListGet :: Session -> String -> MenuItem ()
+ssMenuListGet ss s = 
     case (lookup s ml) of
         Just mi -> mi
         Nothing -> snd $ last ml
-    where ml = sessionGetMenus ss
-        
---------------------
+    where ml = ssMenus ss
+    
+ssReadSourceFiles :: Session -> IO [SourceFile]
+ssReadSourceFiles ss = do 
+    pr <- prRead ss 
+    return (prFiles pr)
 
-sourceFileGetPanel :: SourceFile -> Panel()                        
-sourceFileGetPanel (SourceFile x _ _ _ ) = x                        
-                      
-sourceFileGetPanelHwnd :: SourceFile -> Word64                        
-sourceFileGetPanelHwnd (SourceFile _ x _ _ ) = x                        
+ssToString :: Session -> IO String
+ssToString ss = do
+    fs <- frameToString $ ssFrame ss
+    prs <- prToString $ ssProject ss
+    return ("{Session} Main: " ++ fs ++ prs)
 
-sourceFileGetEditor :: SourceFile -> ScnEditor                        
-sourceFileGetEditor (SourceFile _ _ x _) = x                        
+ssIsOpeningState :: [SourceFile] -> IO Bool
+ssIsOpeningState [sf@(SourceFile _ _ e Nothing)] = do
+    b <- scnIsClean e
+    return (b)
+ssIsOpeningState _ = return (False)
+               
+----------------------------------------------------------------
+-- Source file helpers
+----------------------------------------------------------------
+                       
+sfEditorHwnd :: SourceFile -> Word64                        
+sfEditorHwnd (SourceFile _ _ e _) = ptrToWord64 $ scnGetHwnd e                        
 
-sourceFileGetEditorHwnd :: SourceFile -> Word64                        
-sourceFileGetEditorHwnd (SourceFile _ _ e _) = ptrToWord64 $ scnGetHwnd e                        
+sfFilePathString :: SourceFile -> String                        
+sfFilePathString sf = maybe "" id (sfFilePath sf)
 
-sourceFileGetFilePath :: SourceFile -> Maybe String                        
-sourceFileGetFilePath (SourceFile _ _ _ x) = x                       
+sfSetFilePath :: SourceFile -> String -> SourceFile
+sfSetFilePath (SourceFile p hp e _) fp = (SourceFile p hp e (Just fp))
 
-sourceFileGetFilePathString :: SourceFile -> String                        
-sourceFileGetFilePathString sf = 
-    case (sourceFileGetFilePath sf) of
-        Just fp -> fp
-        Nothing -> ""
+sfMatchesHwnd :: SourceFile -> Word64 -> Bool
+sfMatchesHwnd sf h = h == (sfPanelHwnd sf)
 
-sourceFileSetFilePath :: SourceFile -> String -> SourceFile
-sourceFileSetFilePath (SourceFile p hp e _) fp = (SourceFile p hp e (Just fp))
-
-sourceFileMatchesHwnd :: SourceFile -> Word64 -> Bool
-sourceFileMatchesHwnd sf h = h == (sourceFileGetPanelHwnd sf)
-
-createSourceFile :: Panel() -> ScnEditor -> Maybe String -> IO SourceFile
-createSourceFile p e mfp = do
+sfCreate :: Panel() -> ScnEditor -> Maybe String -> IO SourceFile
+sfCreate p e mfp = do
     hp <- windowGetHandle p
     return (SourceFile p (ptrToWord64 hp) e mfp)
  
-isSourceFileInList :: String -> [SourceFile] -> Bool
-isSourceFileInList fp fs = 
-    case find (\sf -> sourceFilePathIs sf (Just fp)) fs of
+sfIsInList :: String -> [SourceFile] -> Bool
+sfIsInList fp fs = 
+    case find (\sf -> sfPathIs sf (Just fp)) fs of
         Just _ -> True
         Nothing -> False
  
-sourceFilePathIs :: SourceFile -> Maybe String -> Bool
-sourceFilePathIs (SourceFile _ _ _ mfp1) mfp2 = fmap (map toLower) mfp1 == fmap (map toLower) mfp2
+sfPathIs :: SourceFile -> Maybe String -> Bool
+sfPathIs (SourceFile _ _ _ mfp1) mfp2 = fmap (map toLower) mfp1 == fmap (map toLower) mfp2
 
-projectGetFiles :: Project -> [SourceFile]
-projectGetFiles (Project x) = x
+sfIsSame :: SourceFile -> SourceFile -> Bool
+sfIsSame sf1 sf2 = (sfPanelHwnd sf1) == (sfPanelHwnd sf2)
 
-projectSetFiles :: Project -> [SourceFile] -> Project
-projectSetFiles (Project _) x = (Project x)
+-- updates the mutable project data to include the modified source file                        
+sfUpdate :: Session -> SourceFile -> IO Project                        
+sfUpdate ss sf' = do
+    pr' <- prUpdate ss (\pr -> updateFile (prFiles pr) h)
+    return (pr')
+    
+    where
+        h = sfPanelHwnd sf'
+        updateFile sfs h = prCreate (map (\sf -> if (sfMatchesHwnd sf h) then sf' else sf) sfs)
 
-sessionIsOpeningState :: [SourceFile] -> IO Bool
-sessionIsOpeningState [sf@(SourceFile _ _ e Nothing)] = do
-    b <- scnIsClean e
-    return (b)
-sessionIsOpeningState _ = return (False)
-
-sessionReadSourceFiles :: Session -> IO [SourceFile]
-sessionReadSourceFiles ss = do 
-    pr <- readProject ss 
-    return (projectGetFiles pr)
-
-createProject :: [SourceFile] -> Project
-createProject sfs = (Project sfs)
-
-sourceFileToString :: SourceFile -> String
-sourceFileToString (SourceFile _ hp e mfp) = 
+sfToString :: SourceFile -> String
+sfToString (SourceFile _ hp e mfp) = 
         "{SourceFile} Panel: 0x" ++ (showHex hp "" ) ++
         ", (" ++ show (e) ++ "), " ++ 
         ", File: " ++ show (mfp)
         
-sessionToString :: Session -> IO String
-sessionToString ss = do
-    fs <- frameToString $ sessionGetMainFrame ss
-    prs <- projectToString $ sessionGetProject ss
-    return ("{Session} Main: " ++ fs ++ prs)
+----------------------------------------------------------------
+-- Project helpers
+----------------------------------------------------------------
 
-projectToString :: TProject -> IO String
-projectToString tpr = do
+prSetFiles :: Project -> [SourceFile] -> Project
+prSetFiles (Project _) x = (Project x)
+
+prCreate :: [SourceFile] -> Project
+prCreate sfs = (Project sfs)
+
+prToString :: TProject -> IO String
+prToString tpr = do
     (Project fs) <- atomically $ readTVar tpr
-    let ss = map sourceFileToString fs
+    let ss = map sfToString fs
     let s = concat $ punctuate ", " ss
     return ("Files : " ++ s)
     
-updateProject :: Session -> (Project -> Project) -> IO Project
-updateProject ss f = atomically (do
-                        let tpr = sessionGetProject ss
+prUpdate :: Session -> (Project -> Project) -> IO Project
+prUpdate ss f = atomically (do
+                        let tpr = ssProject ss
                         pr <- readTVar $ tpr
                         let pr' = f pr
                         writeTVar tpr pr'
                         return (pr))
-                        
-
--- updates the mutable project data to include the modified source file                        
-updateSourceFile :: Session -> SourceFile -> IO Project                        
-updateSourceFile ss sf' = do
-    pr' <- updateProject ss (\pr -> updateFile (projectGetFiles pr) h)
-    return (pr')
-    
-    where
-        h = sourceFileGetPanelHwnd sf'
-        updateFile sfs h = createProject(map (\sf -> if (sourceFileMatchesHwnd sf h) then sf' else sf) sfs)
-    
-readProject :: Session -> IO Project
-readProject ss = atomically $ readTVar $ sessionGetProject ss
-
-sourceFileIsSame :: SourceFile -> SourceFile -> Bool
-sourceFileIsSame sf1 sf2 = (sourceFileGetPanelHwnd sf1) == (sourceFileGetPanelHwnd sf2)
-
+                           
+prRead :: Session -> IO Project
+prRead ss = atomically $ readTVar $ ssProject ss
 
 
