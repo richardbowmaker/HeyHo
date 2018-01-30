@@ -91,17 +91,15 @@ mainGUI = do
     sf1 <- statusField [text := "SF1", statusWidth := 20]
     sf2 <- statusField [text := "SF2"]
 
-    tb <- auiToolBarCreate f idAny (Point (-1) (-1)) (Size (-1) (-1)) $ wxAUI_TB_DEFAULT_STYLE + wxAUI_TB_OVERFLOW + wxAUI_TB_HORIZONTAL
-
-  
-
-    api <- auiPaneInfoCreateDefault
-    auiPaneInfoCaption api "Toolbar  1"
-    auiPaneInfoToolbarPane api
-    auiPaneInfoTop api 
-    
-    auiManagerAddPaneByPaneInfo am tree api
-    
+    -- create Toolbar
+    tbar   <- toolBar f []
+    ti <- toolItem tbar "what is this"  False "save.png" []
+{- 
+    let foimg = "ship.ico"
+    let abimg = "rock.ico"
+    _      <- toolMenu tbar open  "Open"  foimg []
+    _      <- toolMenu tbar about "About" abimg []
+-}  
   
     -- set the statusbar and menubar
     set f [statusBar := [sf1,sf2]]

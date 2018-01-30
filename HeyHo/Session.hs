@@ -13,6 +13,7 @@ module Session
     sessionGetAuiManager, 
     sessionGetNotebook,
     sessionGetProject,
+    sessionGetStatus,
     sessionGetDebug,
     SessionNameMenuPair,
     SessionMenuList,
@@ -22,12 +23,11 @@ module Session
     sessionMenuListAdd,
     sessionMenuListGet,
     createSourceFile,
-    sourceFileGetPanel,
-    sourceFileGetPanelHwnd,
-    sourceFileGetEditor,
-    sourceFileGetEditorHwnd,
     sourceFileSetFilePath,
-    sourceFileGetFilePath,
+    sfPanel,
+    sfPanelHwnd,
+    sfEditor,
+    sfFilePath,
     sourceFileGetFilePathString,
     sourceFileMatchesHwnd,
     projectGetFiles,
@@ -42,6 +42,7 @@ module Session
 ) where
 
 
+import Graphics.UI.WX
 import Graphics.UI.WXCore
 import Control.Concurrent.STM
 import Data.String.Combinators (punctuate)
@@ -62,7 +63,7 @@ data Session = Session {    mainFrame   :: Frame (),            -- Main window
                             editorNB    :: AuiNotebook (),      -- Notebook of source file editors
                             project     :: TProject,            -- Project data (mutable)
                             menus       :: SessionMenuList,
-                            status      :: StatusBar(),
+                            status      :: StatusField,
                             debug       :: ScnEditor}
                                                         
  -- project data is mutable
@@ -71,10 +72,10 @@ type TProject = TVar Project
 data Project = Project { files :: [SourceFile] }
 
 -- Session data
-data SourceFile = SourceFile {  edPanel     :: Panel (),        -- The panel added to the AuiNotebookManager
-                                hPanel      :: Word64,          -- HWND of panel
-                                editor      :: ScnEditor,       -- The Scintilla editor, child window of panel
-                                filePath    :: Maybe String}    -- Source file path, Nothing = file name not set yet
+data SourceFile = SourceFile {  sfPanel     :: Panel (),        -- The panel added to the AuiNotebookManager
+                                sfPanelHwnd :: Word64,          -- HWND of panel
+                                sfEditor    :: ScnEditor,       -- The Scintilla editor, child window of panel
+                                sfFilePath    :: Maybe String}    -- Source file path, Nothing = file name not set yet
 
 type SessionNameMenuPair = (String, MenuItem ())                               
 type SessionMenuList = [SessionNameMenuPair]
@@ -95,13 +96,16 @@ sessionGetProject (Session _ _ _ x _ _ _) = x
 sessionGetMenus :: Session -> SessionMenuList
 sessionGetMenus (Session _ _ _ _ x _ _) = x
 
+sessionGetStatus :: Session -> StatusField
+sessionGetStatus (Session _ _ _ _ _ x _) = x
+
 sessionGetDebug :: Session -> ScnEditor
 sessionGetDebug (Session _ _ _ _ _ _ x) = x
 
-createSession :: Frame () -> AuiManager () -> AuiNotebook () -> Project -> SessionMenuList -> StatusBar() -> ScnEditor -> IO (Session)
-createSession mf am nb pr ms sb db = do 
+createSession :: Frame () -> AuiManager () -> AuiNotebook () -> Project -> SessionMenuList -> StatusField -> ScnEditor -> IO (Session)
+createSession mf am nb pr ms sf db = do 
     tpr <- atomically $ newTVar (createProject [])
-    return (Session mf am nb tpr ms sb db)
+    return (Session mf am nb tpr ms sf db)
 
 --------------------    
 

@@ -123,8 +123,11 @@ mainGUI = do
     let burning = bitmap  "burning.ico"
     
 --    set save [size := (Size 16 16)]
+    tbi <- auiToolBarAddTool tb 101 "Save" save burning wxITEM_NORMAL "help short" "help long" f
+    auiToolBarEnableTool tb 101 True
+    auiToolBarRealize tb
     
-    auiToolBarAddTool tb 101 "Save" save burning wxITEM_NORMAL "help short" "help long" f
+    set tbi [on command := cmdToolbar]
     
  
     api <- auiPaneInfoCreateDefault
@@ -142,6 +145,10 @@ mainGUI = do
 
     set f [on closing := onClosing f auiMgr]
      
+    return ()
+
+cmdToolbar :: IO ()
+cmdToolbar = do
     return ()
 
 cmdClose :: Button () -> IO ()

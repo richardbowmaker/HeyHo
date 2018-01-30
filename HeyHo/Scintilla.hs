@@ -40,8 +40,13 @@ module Scintilla
     scnBraceHighlight,
     scnBraceBadLight,
     scnBraceMatch,
+    scnGetCharAt,
+    scnGetLineCount,
+    scnGetLinesOnScreen,
     scnGetCurrentPos,
-    scnGetCharAt
+    scnGetPositionFromLine,
+    scnGetLineFromPosition,
+    scnGetPositionInfo
 ) where 
     
 import Control.Applicative ((<$>), (<*>))
@@ -569,13 +574,47 @@ scnAppendText e s = do
 scnAppendLine :: ScnEditor -> String -> IO ()
 scnAppendLine scn s = scnAppendText scn (s ++ "\n")
     
-scnGetCurrentPos :: ScnEditor -> IO Int
-scnGetCurrentPos e = do
-    p <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETCURRENTPOS 0 0
-    return (fromIntegral p :: Int)
-
 scnGetCharAt :: ScnEditor -> Int -> IO Char
 scnGetCharAt e p = do
     c <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETCHARAT (fromIntegral p :: Word64) 0
     return (toEnum (fromIntegral c :: Int) :: Char)
+   
+----------------------------------------------
+-- Status info 
+----------------------------------------------
 
+scnGetLineCount :: ScnEditor -> IO Int
+scnGetLineCount e = do
+    c <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETLINECOUNT  0 0
+    return (fromIntegral c :: Int)
+    
+scnGetLinesOnScreen :: ScnEditor -> IO Int
+scnGetLinesOnScreen e = do
+    c <- c_ScnSendEditorII (scnGetHwnd e) sCI_LINESONSCREEN  0 0
+    return (fromIntegral c :: Int)
+    
+scnGetCurrentPos :: ScnEditor -> IO Int
+scnGetCurrentPos e = do
+    p <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETCURRENTPOS  0 0
+    return (fromIntegral p :: Int)
+   
+scnGetPositionFromLine :: ScnEditor -> Int -> IO Int
+scnGetPositionFromLine e l = do
+    p <- c_ScnSendEditorII (scnGetHwnd e) sCI_POSITIONFROMLINE  (fromIntegral l :: Word64) 0
+    return (fromIntegral p :: Int)
+
+scnGetLineFromPosition :: ScnEditor -> Int -> IO Int
+scnGetLineFromPosition e p = do
+    l <- c_ScnSendEditorII (scnGetHwnd e) sCI_LINEFROMPOSITION  (fromIntegral p :: Word64) 0
+    return (fromIntegral l :: Int)
+
+-- returns line, line position, doc position, total lines, total size
+scnGetPositionInfo :: ScnEditor -> IO (Int, Int, Int, Int, Int) 
+scnGetPositionInfo e = do
+    p <- scnGetCurrentPos e
+    l <- scnGetLineFromPosition e p
+    ls <- scnGetPositionFromLine e l
+    lc <- scnGetLineCount e
+    cc <- scnGetTextLen e
+    return (l, (p-ls), p, lc, cc)
+    

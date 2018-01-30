@@ -11,7 +11,7 @@ import System.FilePath.Windows (takeFileName)
 import Data.List (find, findIndex)
 import Data.Word (Word64)
 import Numeric (showHex)
-
+import Text.Printf (printf)
 
 -- project imports
 import Debug
@@ -34,7 +34,7 @@ mainGUI = do
     sf <- statusField []
 
     -- AUI manager and child windows
-    ss <- setUpMainWindow mf sb
+    ss <- setUpMainWindow mf sf
     
     -- set the statusbar and menubar
     set mf [statusBar := [sf]]
@@ -47,8 +47,8 @@ mainGUI = do
 -- Setup main window, AUI manager its child windows and the menus
 ------------------------------------------------------------    
    
-setUpMainWindow :: Frame () -> StatusBar () -> IO (Session)    
-setUpMainWindow mf sb = do 
+setUpMainWindow :: Frame () -> StatusField -> IO (Session)    
+setUpMainWindow mf sf = do 
 
     am <- auiManagerCreate mf wxAUI_MGR_DEFAULT
       
@@ -112,7 +112,7 @@ setUpMainWindow mf sb = do
     menus <- setupMenus mf 
 
     -- create the session data
-    ss <- createSession mf am enb (createProject []) menus sb scn
+    ss <- createSession mf am enb (createProject []) menus sf scn
     
     -- add blank file to editor
     editorAddNewFile ss
@@ -199,6 +199,13 @@ setupMenus mf  = do
                                     ("EditAll",         menuEditAll),
                                     ("TestTest",        menuTestTest)]
 
+    
+    -- create Toolbar
+    tbar   <- toolBar mf []
+    _      <- toolMenu tbar menuFileSave    "" "save.png"    []
+    _      <- toolMenu tbar menuFileSaveAll "" "saveall.png" []
+
+   
     return (ml)
     
 ------------------------------------------------------------    
@@ -218,6 +225,7 @@ onTabChanged :: Session -> EventAuiNotebook -> IO ()
 onTabChanged ss ev@(AuiNotebookPageChanged _ _) = do
     updateSaveMenus ss
     updateEditMenus ss
+    updateStatus ss
     return ()    
 
 onTabClose :: Session -> EventAuiNotebook -> IO ()
@@ -294,7 +302,7 @@ onFileNew ss = do
 onEditUndo :: Session -> IO ()
 onEditUndo ss = do
     sf <- enbGetSelectedSourceFile ss
-    scnUndo $ sourceFileGetEditor sf
+    scnUndo $ editor sf
     return ()
 
 onEditRedo :: Session -> IO ()
@@ -391,6 +399,9 @@ closeTab ss sf = do
     
     -- remove source file from project
     updateProject ss (\pr -> createProject (findAndRemove (sourceFileIsSame sf) (projectGetFiles pr)))
+    
+    -- update status bar
+    updateStatus ss
     
     return ()
     
@@ -524,6 +535,7 @@ scnCallback ss sn = do
             return ()
             
         2007 -> do -- sCN_UPDATEUI
+            updateStatus ss
             updateEditMenus ss
             return ()
         
@@ -603,7 +615,21 @@ updateEditMenus ss = do
         set (sessionMenuListGet ss "EditPaste")   [enabled := False]
         set (sessionMenuListGet ss "EditAll")     [enabled := False]
         return ()
-               
+ 
+-- display line count, cursor position etc. 
+updateStatus :: Session -> IO ()   
+updateStatus ss = do
+    let st = sessionGetStatus ss
+    fs <- sessionReadSourceFiles ss
+    if (length fs > 0) then do
+        sf <- enbGetSelectedSourceFile ss   
+        (l, lp, dp, lc, cc) <- scnGetPositionInfo $ sourceFileGetEditor sf
+        set st [text:= (printf "Line: %d Col: %d, Lines: %d Pos: %d Size: %d" (l+1) (lp+1) lc dp cc)]
+        return ()
+    else do
+        set st [text:= ""]
+        return ()           
+    
 -----------------------------------------------------------------
 -- Session management
 -----------------------------------------------------------------
@@ -825,6 +851,11 @@ enbSetTabText ss sf = do
         Nothing -> return ()
     return ()
  
+enbGetTabCount :: Session -> IO Int
+enbGetTabCount ss = do
+    pc <- auiNotebookGetPageCount $ sessionGetNotebook ss
+    return (pc)
+
 ------------------------------------------------------------    
 -- Notebook
 ------------------------------------------------------------    
