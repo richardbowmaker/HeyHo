@@ -13,7 +13,9 @@ import Data.Char (toLower)
 import System.IO
 import Control.Concurrent.STM
 
+bug
 
+bug
 
 import qualified Data.ByteString.Char8 as BS (pack, readFile, writeFile, ByteString)
 
@@ -110,7 +112,7 @@ mainGUI = do
 
  
 updateProject :: TProject -> (Project -> Project) -> IO (Project)
-updateProject tpr f = atomically (do 
+updateProject tpr f = atomally (do 
                         pr <- readTVar tpr
                         let pr' = f pr
                         writeTVar tpr pr'

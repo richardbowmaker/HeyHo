@@ -1,8 +1,11 @@
+
+
 module Session 
 (
     Session,
     Project,
     SourceFile,
+    TOutput,
 --
     ssCreate,
     ssFrame,
@@ -11,6 +14,8 @@ module Session
     ssProject,
     ssMenus,
     ssStatus,
+    ssTOutput,
+    ssOutput,
     ssDebug,
     ssMenuListNew,
     ssMenuListCreate,
@@ -41,16 +46,21 @@ module Session
     prCreate,
     prToString,
     prUpdate,
-    prRead
-    
+    prRead,
+--
+    otClear,
+    otAddText,
+    otAddLine    
 ) where
 
 
 import Graphics.UI.WX
 import Graphics.UI.WXCore
 import Control.Concurrent.STM
+import Data.ByteString.Internal (ByteString)
 import Data.String.Combinators (punctuate)
 import Data.List (find)
+import qualified Data.ByteString.Char8 as BS (pack)
 import Data.Char (toLower)
 import Data.Word (Word64)
 import Numeric (showHex)
@@ -68,10 +78,15 @@ data Session = Session {    ssFrame   :: Frame (),            -- Main window
                             ssProject :: TProject,            -- Project data (mutable)
                             ssMenus   :: SsMenuList,
                             ssStatus  :: StatusField,
+                            ssTOutput :: TOutput,
+                            ssOutput  :: ScnEditor,
                             ssDebug   :: ScnEditor}
                                                         
  -- project data is mutable
 type TProject = TVar Project
+
+-- compiler output mutable
+type TOutput = TVar ByteString
 
 data Project = Project { prFiles :: [SourceFile] }
 
@@ -83,16 +98,16 @@ data SourceFile = SourceFile {  sfPanel     :: Panel (),        -- The panel add
 
 type SsNameMenuPair = (String, MenuItem ())                               
 type SsMenuList = [SsNameMenuPair]
-
-                        
+                       
 ----------------------------------------------------------------
 -- Session  helpers
 ----------------------------------------------------------------
 
-ssCreate :: Frame () -> AuiManager () -> AuiNotebook () -> Project -> SsMenuList -> StatusField -> ScnEditor -> IO (Session)
-ssCreate mf am nb pr ms sf db = do 
-    tpr <- atomically $ newTVar (prCreate [])
-    return (Session mf am nb tpr ms sf db)
+ssCreate :: Frame () -> AuiManager () -> AuiNotebook () -> Project -> SsMenuList -> StatusField -> ScnEditor -> ScnEditor -> IO (Session)
+ssCreate mf am nb pr ms sf ot db = do 
+    tpr <- atomically $ newTVar $ prCreate []
+    tot <- atomically $ newTVar $ BS.pack "" 
+    return (Session mf am nb tpr ms sf tot ot db)
 
 -- creates a new menu item lookup list
 -- a dummy entry is provided for failed lookups to simplfy client calls to menuListGet 
@@ -209,5 +224,30 @@ prUpdate ss f = atomically (do
                            
 prRead :: Session -> IO Project
 prRead ss = atomically $ readTVar $ ssProject ss
+
+----------------------------------------------------------------
+-- Output helpers
+----------------------------------------------------------------
+
+otClear :: Session -> IO ()
+otClear ss = do
+    let e = ssOutput ss
+    scnSetReadOnly e False
+    scnClearAll e
+    scnSetReadOnly e True
+
+otAddText :: Session -> ByteString -> IO ()
+otAddText ss bs = do
+    let e = ssOutput ss
+    scnSetReadOnly e False
+    scnAppendText e bs
+    scnSetReadOnly e True
+    
+otAddLine :: Session -> ByteString -> IO ()
+otAddLine ss bs = do
+    let e = ssOutput ss
+    scnSetReadOnly e False
+    scnAppendLine e bs
+    scnSetReadOnly e True
 
 

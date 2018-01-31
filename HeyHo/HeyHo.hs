@@ -1,19 +1,21 @@
 
-
-
 module Main where
 
 -- library imports
-import Graphics.UI.WX
-import Graphics.UI.WXCore
-import qualified Data.ByteString.Char8 as BS (pack, readFile, writeFile, ByteString)
-
-
-import System.FilePath.Windows (takeFileName)
+import Control.Concurrent 
+import Control.Concurrent.STM
+import qualified Data.ByteString.Char8 as BS (ByteString, hGetLine, readFile, pack, putStrLn, writeFile)
+import qualified Data.ByteString as BS (append)
 import Data.List (find, findIndex)
 import Data.Word (Word64)
+import Graphics.UI.WX
+import Graphics.UI.WXCore
 import Numeric (showHex)
 import Text.Printf (printf)
+import System.IO
+import System.FilePath.Windows (takeFileName)
+import System.Process
+import System.Process.Common
 
 -- project imports
 import Debug
@@ -21,7 +23,6 @@ import Misc
 import Scintilla
 import ScintillaConstants
 import Session
-
       
 main = start mainGUI
 
@@ -42,6 +43,9 @@ mainGUI = do
     set mf [statusBar := [sf]]
 
     set mf [on closing := onClosing ss]
+    
+    -- create a timer that updates the display
+    t <- timer mf [interval := 100, on command := onTimer ss]
         
     return ()
    
@@ -84,14 +88,14 @@ setUpMainWindow mf sf = do
     auiManagerAddPaneByPaneInfo am enb api
    
     -- add output pane
-    nb <- createNoteBook mf
+    (onb, oe) <- createNoteBook mf
     
     api <- auiPaneInfoCreateDefault
     auiPaneInfoCaption api "Output"
     auiPaneInfoBottom api
     auiPaneInfoCloseButton api True
 
-    auiManagerAddPaneByPaneInfo am nb api
+    auiManagerAddPaneByPaneInfo am onb api
     
     -- add floating debug window
     dp <- panel mf [size := (Size 400 400)]
@@ -114,7 +118,7 @@ setUpMainWindow mf sf = do
     menus <- setupMenus mf 
 
     -- create the session data
-    ss <- ssCreate mf am enb (prCreate []) menus sf scn
+    ss <- ssCreate mf am enb (prCreate []) menus sf oe scn
     
     -- add blank file to editor
     editorAddNewFile ss
@@ -133,6 +137,8 @@ setUpMainWindow mf sf = do
     set (ssMenuListGet ss "EditCopy")     [on command := onEditCopy      ss]
     set (ssMenuListGet ss "EditPaste")    [on command := onEditPaste     ss]
     set (ssMenuListGet ss "EditAll")      [on command := onEditSelectAll ss]
+    set (ssMenuListGet ss "BuildBuild")   [on command := onBuildBuild    ss]
+    set (ssMenuListGet ss "BuildCompile") [on command := onBuildCompile  ss]
     set (ssMenuListGet ss "TestTest")     [on command := onTestTest      ss]
     
     set enb [on auiNotebookOnPageCloseEvent   := onTabClose   ss]
@@ -199,6 +205,8 @@ setupMenus mf  = do
                                 ("EditCopy",        menuEditCopy),
                                 ("EditPaste",       menuEditPaste),
                                 ("EditAll",         menuEditAll),
+                                ("BuildBuild",      menuBuildBuild),
+                                ("BuildCompile",    menuBuildCompile),
                                 ("TestTest",        menuTestTest)]
 
     
@@ -339,12 +347,90 @@ onEditSelectAll ss = do
   
 onTestTest :: Session -> IO ()
 onTestTest ss = do
-    sf <- enbGetSelectedSourceFile ss
-    b <- scnSelectionIsEmpty $ sfEditor sf
-    debugOut ss $ "Selection: " ++ show b
+    otClear ss
+    otAddLine ss $ BS.pack "line 1"
+    otAddLine ss $ BS.pack "line 2"
+    otAddLine ss $ BS.pack "line 3"
     return ()
 
--------------------------------------------------
+------------------------------------------------------------    
+-- Build Menu handlers
+------------------------------------------------------------    
+    
+onBuildBuild :: Session -> IO ()
+onBuildBuild ss = do
+    otClear ss
+    forkIO $ runExtCmd ss "D:\\_Rick's\\haskell\\HeyHo\\build.bat" ["heyho"] "D:\\_Rick's\\haskell\\HeyHo" Nothing   
+    return ()
+    
+onBuildCompile :: Session -> IO ()
+onBuildCompile ss = do
+
+    otClear ss 
+    set (ssMenuListGet ss "BuildBuild")   [enabled := False]        
+    set (ssMenuListGet ss "BuildCompile") [enabled := False] 
+    sf <- enbGetSelectedSourceFile ss
+    
+    let mfp = sfFilePath sf
+    case mfp of
+        Just fp -> do
+            forkIO $ runExtCmd ss 
+                "C:\\Program Files\\Haskell Platform\\8.0.1\\bin\\ghc" ["-c", fp] 
+                "D:\\_Rick's\\haskell\\HeyHo" 
+                (Just $ compileComplete ss)
+            return ()
+        Nothing -> do
+            ans <- fileSaveAs ss sf
+            if ans then onBuildCompile ss
+            else compileComplete ss
+               
+compileComplete :: Session -> IO ()
+compileComplete ss = do
+    set (ssMenuListGet ss "BuildBuild")   [enabled := True]        
+    set (ssMenuListGet ss "BuildCompile") [enabled := True]
+--    otAddLine ss $ BS.pack "Compile complete"
+    return ()
+
+-- run command and redirect std out to the output pane
+-- ... -> command -> arguments -> working directory -> completion function
+runExtCmd :: Session -> String -> [String] -> String -> Maybe (IO ()) -> IO ()
+runExtCmd ss cmd args dir mfin = do    
+    (_, Just hout, Just herr, _) <- createProcess_ "errors" (proc cmd args){cwd = Just dir, std_out = CreatePipe, std_err = CreatePipe}
+    forkIO $ streamToOutput hout (ssTOutput ss) mfin
+    forkIO $ streamToOutput herr (ssTOutput ss) Nothing
+    return ()
+          
+streamToOutput :: Handle -> TOutput -> Maybe (IO ()) -> IO ()
+streamToOutput h tv mfin = do
+    eof <- hIsEOF h
+    if eof then do 
+        hClose h
+        -- call user completion function
+        case mfin of
+            Just fin -> fin
+            Nothing  -> return ()
+    else do
+        s <- BS.hGetLine h
+        atomically (do
+            s1 <- readTVar tv
+            writeTVar tv $ BS.append s1 $ BS.append s $ BS.pack "\n")
+        streamToOutput h tv mfin
+   
+------------------------------------------------------------    
+-- Timer handler
+------------------------------------------------------------    
+    
+onTimer :: Session -> IO ()
+onTimer ss = do
+
+    -- update output pane
+    let tot = ssTOutput ss        
+    str <- atomically $ swapTVar tot $ BS.pack ""
+    otAddText ss str
+    
+------------------------------------------------------------    
+-- 
+------------------------------------------------------------    
 
 closeEditor :: Session -> SourceFile -> IO Bool
 closeEditor ss sf = do
@@ -859,20 +945,29 @@ enbGetTabCount ss = do
     return (pc)
 
 ------------------------------------------------------------    
--- Notebook
+-- Create output pane
 ------------------------------------------------------------    
 
-createNoteBook :: Frame () -> IO (AuiNotebook ())
+createNoteBook :: Frame () -> IO (AuiNotebook (), ScnEditor)
 createNoteBook f = do
-    nb <- auiNotebookCreate f idAny (Point 0 0) (Size 0 0) (wxCLIP_CHILDREN + wxAUI_NB_BOTTOM)
+
+    nb <- auiNotebookCreate f idAny (Point 0 0) (Size 0 0) (wxCLIP_CHILDREN + wxAUI_NB_TOP)
     set nb [] 
     p <- panel nb []
     hwnd <- windowGetHandle p
-    scn <- scnCreateEditor hwnd
-    auiNotebookAddPage nb p "Example" False 0
+    e <- scnCreateEditor hwnd
+    auiNotebookAddPage nb p "Output" False 0
     ta <- auiSimpleTabArtCreate
     auiNotebookSetArtProvider nb ta
-    return (nb)
+    
+    -- configure editor
+    scnSetLexer e (fromIntegral sCLEX_CONTAINER :: Int)
+    scnSetAStyle e (fromIntegral sTYLE_DEFAULT :: Word64) scnBlack scnWhite 9 "Courier New"
+    scnStyleClearAll e
+    scnSetAStyle e (fromIntegral sCE_H_DEFAULT :: Word64) scnBlack scnWhite 9 "Courier New"
+    scnSetReadOnly e True
+ 
+    return (nb, e)
 
 ------------------------------------------------------------    
 -- Tree Control

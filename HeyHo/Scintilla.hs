@@ -11,6 +11,7 @@ module Scintilla
     scnSetEventHandler,
     scnEnableEvents,
     scnDisableEvents,
+    scnClearAll,
     scnSetText,
     scnGetAllText,
     scnGetTextLen,
@@ -46,16 +47,22 @@ module Scintilla
     scnGetCurrentPos,
     scnGetPositionFromLine,
     scnGetLineFromPosition,
-    scnGetPositionInfo
+    scnGetPositionInfo,
+    scnSetLexer,
+    scnSetAStyle,
+    scnStyleClearAll,
+    scnBlack,
+    scnWhite
 ) where 
     
 import Control.Applicative ((<$>), (<*>))
 
 import Data.Word (Word32, Word64)
 import Data.Int (Int32, Int64)
-import qualified Data.ByteString as BS (replicate, init, replicate, append)
+import qualified Data.ByteString as BS (append, init, replicate)
+import qualified Data.ByteString.Char8 as BS (pack)
 import Data.ByteString.Internal (ByteString)
-import Data.ByteString.Unsafe (unsafeUseAsCString)
+import Data.ByteString.Unsafe (unsafeUseAsCString, unsafeUseAsCStringLen)
 import Data.String.Combinators (punctuate)
 import Data.Strings (strNull)
 
@@ -72,9 +79,6 @@ import Numeric (showHex)
 -- project imports
 import ScintillaConstants
 import Misc
-
-
- 
 
 -----------------------
 -- Windows API calls --
@@ -546,6 +550,11 @@ scnUpdateBraces e = do
 -- Text Get and Set 
 ----------------------------------------------
 
+scnClearAll :: ScnEditor -> IO ()
+scnClearAll e = do
+    c_ScnSendEditorII (scnGetHwnd e) sCI_CLEARALL 0 0
+    return ()
+
 -- set the entire content of the editor    
 scnSetText :: ScnEditor -> ByteString -> IO ()
 scnSetText e bs = do
@@ -566,13 +575,14 @@ scnGetTextLen e = do
     len <- c_ScnSendEditorII (scnGetHwnd e) sCI_GETLENGTH 0 0
     return (fromIntegral len :: Int)
    
-scnAppendText :: ScnEditor -> String -> IO ()
-scnAppendText e s = do
-    withCStringLen s (\(cs, l) -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_APPENDTEXT (fromIntegral l :: Word64) cs)
+scnAppendText :: ScnEditor -> ByteString -> IO ()
+scnAppendText e bs = do
+    let bs0 = BS.append bs (BS.replicate 1 0) -- add terminating null 
+    unsafeUseAsCStringLen bs0 (\(cs, l) -> do c_ScnSendEditorIS (scnGetHwnd e) sCI_APPENDTEXT (fromIntegral (l-1) :: Word64) cs)
     return ()
     
-scnAppendLine :: ScnEditor -> String -> IO ()
-scnAppendLine scn s = scnAppendText scn (s ++ "\n")
+scnAppendLine :: ScnEditor -> ByteString -> IO ()
+scnAppendLine scn bs = scnAppendText scn $ BS.append bs $ BS.pack "\n"
     
 scnGetCharAt :: ScnEditor -> Int -> IO Char
 scnGetCharAt e p = do
