@@ -6,6 +6,7 @@ module Session
     Project,
     SourceFile,
     TOutput,
+    FunctionChannel,
 --
     ssCreate,
     ssFrame,
@@ -15,6 +16,7 @@ module Session
     ssMenus,
     ssStatus,
     ssTOutput,
+    ssCFunc,
     ssOutput,
     ssDebug,
     ssMenuListNew,
@@ -57,6 +59,7 @@ module Session
 import Graphics.UI.WX
 import Graphics.UI.WXCore
 import Control.Concurrent.STM
+import Control.Concurrent.STM.TChan
 import Data.ByteString.Internal (ByteString)
 import Data.String.Combinators (punctuate)
 import Data.List (find)
@@ -79,14 +82,17 @@ data Session = Session {    ssFrame   :: Frame (),            -- Main window
                             ssMenus   :: SsMenuList,
                             ssStatus  :: StatusField,
                             ssTOutput :: TOutput,
+                            ssCFunc   :: FunctionChannel,
                             ssOutput  :: ScnEditor,
                             ssDebug   :: ScnEditor}
                                                         
  -- project data is mutable
 type TProject = TVar Project
 
--- compiler output mutable
-type TOutput = TVar ByteString
+-- compiler output channel
+type TOutput = TChan ByteString
+
+type FunctionChannel = TChan (IO ())
 
 data Project = Project { prFiles :: [SourceFile] }
 
@@ -106,8 +112,9 @@ type SsMenuList = [SsNameMenuPair]
 ssCreate :: Frame () -> AuiManager () -> AuiNotebook () -> Project -> SsMenuList -> StatusField -> ScnEditor -> ScnEditor -> IO (Session)
 ssCreate mf am nb pr ms sf ot db = do 
     tpr <- atomically $ newTVar $ prCreate []
-    tot <- atomically $ newTVar $ BS.pack "" 
-    return (Session mf am nb tpr ms sf tot ot db)
+    tot <- atomically $ newTChan
+    cfn <- atomically $ newTChan
+    return (Session mf am nb tpr ms sf tot cfn ot db)
 
 -- creates a new menu item lookup list
 -- a dummy entry is provided for failed lookups to simplfy client calls to menuListGet 

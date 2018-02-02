@@ -14,6 +14,8 @@ import Graphics.Win32.Message
 
 foreign import ccall unsafe "MarshallTypes" c_marshallTypes :: CString -> Int -> Double -> IO ()
 
+sdasd
+
 main = start mainGUI
 
 mainGUI :: IO ()

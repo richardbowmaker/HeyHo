@@ -4,6 +4,8 @@ module Main where
 -- library imports
 import Control.Concurrent 
 import Control.Concurrent.STM
+import qualified Control.Concurrent.Thread as Thread
+import Control.Monad.Loops
 import qualified Data.ByteString.Char8 as BS (ByteString, hGetLine, readFile, pack, putStrLn, writeFile)
 import qualified Data.ByteString as BS (append)
 import Data.List (find, findIndex)
@@ -359,63 +361,83 @@ onTestTest ss = do
     
 onBuildBuild :: Session -> IO ()
 onBuildBuild ss = do
+
     otClear ss
-    forkIO $ runExtCmd ss "D:\\_Rick's\\haskell\\HeyHo\\build.bat" ["heyho"] "D:\\_Rick's\\haskell\\HeyHo" Nothing   
+    otAddLine ss $ BS.pack "Compile started ..."
+    set (ssMenuListGet ss "BuildBuild")   [enabled := False]        
+    set (ssMenuListGet ss "BuildCompile") [enabled := False]
+
+    forkIO $ runExtCmd         
+        "D:\\_Rick's\\haskell\\HeyHo\\build.bat" 
+        ["heyho"] 
+        "D:\\_Rick's\\haskell\\HeyHo" 
+        (ssTOutput ss)
+        (ssTOutput ss)
+        (ssCFunc ss)
+        (Just $ compileComplete ss)
+        
     return ()
     
 onBuildCompile :: Session -> IO ()
 onBuildCompile ss = do
 
-    otClear ss 
+    otClear ss
+    otAddLine ss $ BS.pack "Compile started ..."
     set (ssMenuListGet ss "BuildBuild")   [enabled := False]        
-    set (ssMenuListGet ss "BuildCompile") [enabled := False] 
+    set (ssMenuListGet ss "BuildCompile") [enabled := False]
+
+    -- save file first
     sf <- enbGetSelectedSourceFile ss
-    
-    let mfp = sfFilePath sf
-    case mfp of
-        Just fp -> do
-            forkIO $ runExtCmd ss 
-                "C:\\Program Files\\Haskell Platform\\8.0.1\\bin\\ghc" ["-c", fp] 
-                "D:\\_Rick's\\haskell\\HeyHo" 
-                (Just $ compileComplete ss)
-            return ()
-        Nothing -> do
-            ans <- fileSaveAs ss sf
-            if ans then onBuildCompile ss
-            else compileComplete ss
+    ans <- fileSave ss sf
+    if ans then do
+            -- get again in case filename changed
+            sf <- enbGetSelectedSourceFile ss
+            case (sfFilePath sf) of
+                Just fp -> do
+                    forkIO $ runExtCmd 
+                        "C:\\Program Files\\Haskell Platform\\8.0.1\\bin\\ghc" ["-c", fp] 
+                        "D:\\_Rick's\\haskell\\HeyHo"
+                        (ssTOutput ss) -- stdout goes to TOutput
+                        (ssTOutput ss)
+                        (ssCFunc ss)
+                        (Just $ compileComplete ss)
+                    return ()
+                Nothing -> return ()
+                
+    else return ()
                
 compileComplete :: Session -> IO ()
 compileComplete ss = do
     set (ssMenuListGet ss "BuildBuild")   [enabled := True]        
     set (ssMenuListGet ss "BuildCompile") [enabled := True]
---    otAddLine ss $ BS.pack "Compile complete"
+    otAddText ss $ BS.pack "\nCompile complete\n"
     return ()
 
 -- run command and redirect std out to the output pane
--- ... -> command -> arguments -> working directory -> completion function
-runExtCmd :: Session -> String -> [String] -> String -> Maybe (IO ()) -> IO ()
-runExtCmd ss cmd args dir mfin = do    
-    (_, Just hout, Just herr, _) <- createProcess_ "errors" (proc cmd args){cwd = Just dir, std_out = CreatePipe, std_err = CreatePipe}
-    forkIO $ streamToOutput hout (ssTOutput ss) mfin
-    forkIO $ streamToOutput herr (ssTOutput ss) Nothing
-    return ()
-          
-streamToOutput :: Handle -> TOutput -> Maybe (IO ()) -> IO ()
-streamToOutput h tv mfin = do
-    eof <- hIsEOF h
-    if eof then do 
-        hClose h
-        -- call user completion function
-        case mfin of
-            Just fin -> fin
-            Nothing  -> return ()
-    else do
-        s <- BS.hGetLine h
-        atomically (do
-            s1 <- readTVar tv
-            writeTVar tv $ BS.append s1 $ BS.append s $ BS.pack "\n")
-        streamToOutput h tv mfin
+-- command -> arguments -> working directory -> stdout TChan -> stderr TChan -> completion function
+runExtCmd :: String -> [String] -> String -> TOutput -> TOutput -> FunctionChannel -> Maybe (IO ()) -> IO ()
+runExtCmd cmd args dir cout cerr cfn mfinally = do    
+    (_, Just hout, Just herr, ph) <- createProcess_ "errors" (proc cmd args)
+        {cwd = Just dir, std_out = CreatePipe, std_err = CreatePipe}
+
+    (_, waits) <- Thread.forkIO $ streamToChan hout cout
+    (_, waite) <- Thread.forkIO $ streamToChan herr cerr
+    
+    waits
+    waite
+--    waitForProcess ph
+    
+--    getProcessExitCode ph 
+    
+--    whileM_  (return ())
+    
+    -- schedule finally function to be called in gui thread
+    maybe (return ()) (\f -> atomically $ writeTChan cfn f) mfinally
    
+    where
+    
+        streamToChan h tot = untilM_ (BS.hGetLine h >>= (\s -> atomically $ writeTChan tot s)) (hIsEOF h)
+        
 ------------------------------------------------------------    
 -- Timer handler
 ------------------------------------------------------------    
@@ -424,10 +446,17 @@ onTimer :: Session -> IO ()
 onTimer ss = do
 
     -- update output pane
-    let tot = ssTOutput ss        
-    str <- atomically $ swapTVar tot $ BS.pack ""
-    otAddText ss str
+    withTChan (ssTOutput ss) (otAddText ss) 
     
+    -- run any scheduled functions
+    withTChan (ssCFunc ss) (\f -> f)
+   
+    where
+   
+        withTChan :: TChan a -> (a -> IO ()) -> IO ()
+        withTChan chan f =  
+            atomically (tryReadTChan chan) >>= maybe (return ()) (\a -> f a) 
+
 ------------------------------------------------------------    
 -- 
 ------------------------------------------------------------    
