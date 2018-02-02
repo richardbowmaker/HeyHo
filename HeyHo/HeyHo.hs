@@ -5,6 +5,7 @@ module Main where
 import Control.Concurrent 
 import Control.Concurrent.STM
 import qualified Control.Concurrent.Thread as Thread
+import Control.Monad (liftM)
 import Control.Monad.Loops
 import qualified Data.ByteString.Char8 as BS (ByteString, hGetLine, readFile, pack, putStrLn, writeFile)
 import qualified Data.ByteString as BS (append)
@@ -423,13 +424,9 @@ runExtCmd cmd args dir cout cerr cfn mfinally = do
     (_, waits) <- Thread.forkIO $ streamToChan hout cout
     (_, waite) <- Thread.forkIO $ streamToChan herr cerr
     
-    waits
-    waite
---    waitForProcess ph
-    
---    getProcessExitCode ph 
-    
---    whileM_  (return ())
+    Thread.result =<< waits
+    Thread.result =<< waite
+    waitForProcess ph
     
     -- schedule finally function to be called in gui thread
     maybe (return ()) (\f -> atomically $ writeTChan cfn f) mfinally
@@ -452,11 +449,13 @@ onTimer ss = do
     withTChan (ssCFunc ss) (\f -> f)
    
     where
-   
+
+        -- calls supplied function whilst there is still data in the channel
         withTChan :: TChan a -> (a -> IO ()) -> IO ()
         withTChan chan f =  
-            atomically (tryReadTChan chan) >>= maybe (return ()) (\a -> f a) 
-
+            whileM_ (liftM not $ atomically $ isEmptyTChan chan)
+                (atomically (tryReadTChan chan) >>= maybe (return ()) (\a -> f a))             
+            
 ------------------------------------------------------------    
 -- 
 ------------------------------------------------------------    
